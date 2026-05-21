@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>GAFI Ferrelectrico | Executive Dashboard</title>
+
+    <!-- ═══════════════════════════════════════════ -->
+    <!--              PWA - META TAGS               -->
+    <!-- ═══════════════════════════════════════════ -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#d32f2f">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="GAFI Dashboard">
+    <meta name="description" content="Executive Dashboard para GAFI Ferrelectrico">
+
+    <!-- Iconos para iOS (Apple) -->
+    <link rel="apple-touch-icon" href="icon-180x180.png">
+    <link rel="apple-touch-icon" sizes="192x192" href="icon-192x192.png">
+    <link rel="apple-touch-icon" sizes="512x512" href="icon-512x512.png">
+
+    <!-- Favicon estándar -->
+    <link rel="icon" type="image/png" sizes="32x32" href="icon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="icon-16x16.png">
+    <!-- ═══════════════════════════════════════════ -->
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="dark-theme">
+
+<div class="app-container">
+    <div class="executive-header">
+        <div class="brand-area">
+            <div class="logo-placeholder">
+                <img src="logo-gafi.png" alt="GAFI Logo" width="115" height="55" style="border-radius: 12px;">
+            </div>
+            <div class="brand-text">
+                <h1 class="company-name" contenteditable="true" title="Haz clic para editar">GAFI Ferrelectrico</h1>
+                <div class="company-subtitle">Simplificamos el mundo ferretero</div>
+            </div>
+        </div>
+        <div class="header-actions">
+            <div class="file-upload-wrapper">
+                <label for="excelInput" class="btn-outline-exec"><i class="fas fa-file-excel"></i> Seleccionar Excel</label>
+                <input type="file" id="excelInput" accept=".xlsx, .xls, .xlsm" style="display: none;">
+            </div>
+            <button id="exportAllBtn" class="btn-exec-secondary"><i class="fas fa-download"></i> Exportar todo</button>
+            <button id="themeToggleBtn" class="btn-theme-toggle"><i class="fas fa-moon"></i> <span>Modo Claro</span></button>
+        </div>
+    </div>
+
+    <div class="control-panel">
+        <div class="panel-header">
+            <i class="fas fa-layer-group"></i> <span>Hojas activas</span>
+            <span class="info-badge">mostrar/ocultar</span>
+        </div>
+        <div class="sheets-checkboxes" id="sheetsCheckboxes">
+            <div class="placeholder-text">Cargue un archivo Excel para visualizar hojas.</div>
+        </div>
+        <div class="helper-note">
+            <i class="fas fa-info-circle"></i> Actualizar datos: vuelva a seleccionar el archivo.
+        </div>
+    </div>
+
+    <div class="chart-container" id="chartContainer" style="display: none;">
+        <div class="chart-header">
+            <h3 id="chartTitle">Gráfico de la hoja seleccionada</h3>
+            <button id="closeChartBtn" class="btn-close-chart"><i class="fas fa-times"></i></button>
+        </div>
+        <canvas id="barChart" width="800" height="300" style="max-height: 216px; width: 100%;"></canvas>
+        <div class="chart-footer">
+            <small>Haz clic en cualquier tabla para actualizar el gráfico</small>
+        </div>
+    </div>
+
+    <div class="sheets-viewport" id="sheetsViewport">
+        <div class="empty-state" id="emptyState">
+            <i class="fas fa-chart-line"></i>
+            <h3>Vista ejecutiva de datos</h3>
+            <p>Seleccione un archivo Excel (.xlsx / .xls) para visualizar hojas, métricas y formato condicional.</p>
+            <small>• Haga clic en una tabla para ver su gráfica de barras.<br>• Columnas de porcentaje formateadas.</small>
+        </div>
+    </div>
+
+    <div class="executive-footer">
+        <div class="footer-note">
+            <i class="fas fa-sync-alt"></i> <strong>Actualización:</strong> modifica el Excel, guárdalo y vuelve a seleccionar el archivo.
+        </div>
+        <div class="footer-note">
+            <i class="fas fa-laptop-code"></i> Procesamiento local | SheetJS | Datos seguros
+        </div>
+    </div>
+</div>
+
+<script src="script.js"></script>
+
+<!-- ═══════════════════════════════════════════ -->
+<!--          PWA - REGISTRO DEL SERVICE WORKER  -->
+<!-- ═══════════════════════════════════════════ -->
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./service-worker.js')
+        .then((reg) => {
+          console.log('[PWA] Service Worker registrado:', reg.scope);
+        })
+        .catch((err) => {
+          console.warn('[PWA] Error al registrar Service Worker:', err);
+        });
+    });
+  }
+</script>
+<!-- ═══════════════════════════════════════════ -->
+
+</body>
+</html>
