@@ -1,7 +1,6 @@
 /**
  * script.js - Dashboard Ejecutivo GAFI Ferrelectrico
- * - Hoja "resumen": se muestran exactamente 3 filas de datos por minicard (rellenando con "—" si faltan)
- * - Se mantienen las reglas de color y formato específicas por grupo.
+ * - Para hojas Mes, Cedis Mes, Trimestre, Cartera Vencida: se excluye la última fila de datos en los gráficos.
  * - Resto de funcionalidades igual.
  */
 
@@ -190,7 +189,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const contentWrapper = document.createElement('div');
         contentWrapper.className = 'sheet-content';
         
-        // ========== HOJA "RESUMEN" (minicards con 3 filas fijas) ==========
+        // ========== HOJA "RESUMEN" (minicards) ==========
         if (normalizeString(sheetName) === 'resumen' && rawRows && rawRows.length >= 2) {
             const mainHeaders = rawRows[0] || [];
             const subHeaders = rawRows[1] || [];
@@ -243,6 +242,8 @@ document.addEventListener('DOMContentLoaded', () => {
             groupsToShow.forEach(group => {
                 const normalizedTitle = normalizeString(group.title);
                 const isDN = normalizedTitle === 'dn';
+                const singleRowGroups = ['mes', 'cedis mes', 'trimestre', 'cartera vencida', 'familias'];
+                const showOnlyFirstRow = singleRowGroups.includes(normalizedTitle);
                 const isSpecialGroup = (normalizedTitle === 'dn' || normalizedTitle === 'familias');
                 
                 const miniCard = document.createElement('div');
@@ -263,7 +264,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 const tbody = document.createElement('tbody');
                 
-                // Funciones auxiliares (definidas dentro para tener acceso a las variables)
+                // Funciones auxiliares
                 const parsePercentageNum = (value) => {
                     if (value === null || value === undefined || value === "") return NaN;
                     let num = 0;
@@ -347,49 +348,67 @@ document.addEventListener('DOMContentLoaded', () => {
                     return { display, color };
                 };
                 
-                // Se crean 3 filas fijas (índices 0, 1, 2)
-                for (let rowIdx = 0; rowIdx < 3; rowIdx++) {
-                    // Obtener valores de data1 y data2 para esta fila (si existen)
-                    const leftValue = (group.data1.length > rowIdx) ? group.data1[rowIdx] : null;
-                    const rightValue = (group.data2.length > rowIdx) ? group.data2[rowIdx] : null;
-                    
-                    // Crear fila
-                    const rowElem = document.createElement('tr');
-                    
-                    // Aplicar clase especial para la primera fila (índice 0) si es numérica
-                    if (rowIdx === 0 && (isNumericValue(leftValue) || isNumericValue(rightValue))) {
-                        rowElem.className = 'resumen-row-first';
+                // Fila 2 (índice 0) - primera fila de datos
+                if (group.data1.length > 0 && group.data2.length > 0) {
+                    const row2 = document.createElement('tr');
+                    const leftValue = group.data1[0];
+                    const rightValue = group.data2[0];
+                    const isLeftNumeric = isNumericValue(leftValue);
+                    const isRightNumeric = isNumericValue(rightValue);
+                    if (isLeftNumeric || isRightNumeric) {
+                        row2.className = 'resumen-row-first';
                     }
-                    
                     let left, right;
                     if (isDN) {
-                        left = formatDNCell(leftValue, rowIdx);
-                        right = formatDNCell(rightValue, rowIdx);
-                        // Aplicar clase reducida a la segunda y tercera fila (índices 1 y 2)
-                        if (rowIdx === 1 || rowIdx === 2) {
-                            rowElem.className = 'resumen-row-small';
-                        }
+                        left = formatDNCell(leftValue, 0);
+                        right = formatDNCell(rightValue, 0);
                     } else if (normalizedTitle === 'familias') {
                         left = formatFamiliesCell(leftValue);
                         right = formatFamiliesCell(rightValue);
-                        // Para familias, solo la primera fila tiene tamaño grande; las demás normal (sin clase especial)
                     } else {
                         left = formatNormalCell(leftValue, false, group.title);
                         right = formatNormalCell(rightValue, true, group.title);
-                        // No se aplican clases de tamaño extra para grupos normales
                     }
-                    
                     const td1 = document.createElement('td');
                     td1.textContent = left.display;
                     if (left.color) td1.className = left.color;
                     const td2 = document.createElement('td');
                     td2.textContent = right.display;
                     if (right.color) td2.className = right.color;
-                    
-                    rowElem.appendChild(td1);
-                    rowElem.appendChild(td2);
-                    tbody.appendChild(rowElem);
+                    row2.appendChild(td1);
+                    row2.appendChild(td2);
+                    tbody.appendChild(row2);
                 }
+                
+                // Fila 3 (índice 1) - solo si no es de fila única
+                if (!showOnlyFirstRow && group.data1.length > 1 && group.data2.length > 1) {
+                    const row3 = document.createElement('tr');
+                    let left, right;
+                    if (isDN) {
+                        left = formatDNCell(group.data1[1], 1);
+                        right = formatDNCell(group.data2[1], 1);
+                    } else if (normalizedTitle === 'familias') {
+                        left = formatFamiliesCell(group.data1[1]);
+                        right = formatFamiliesCell(group.data2[1]);
+                    } else {
+                        left = formatNormalCell(group.data1[1], false, group.title);
+                        right = formatNormalCell(group.data2[1], true, group.title);
+                    }
+                    const td1 = document.createElement('td');
+                    td1.textContent = left.display;
+                    if (left.color) td1.className = left.color;
+                    const td2 = document.createElement('td');
+                    td2.textContent = right.display;
+                    if (right.color) td2.className = right.color;
+                    if (isDN) {
+                        td1.style.fontSize = '0.65rem';
+                        td2.style.fontSize = '0.65rem';
+                    }
+                    row3.appendChild(td1);
+                    row3.appendChild(td2);
+                    tbody.appendChild(row3);
+                }
+                // Se eliminó la cuarta fila para DN
                 
                 table.appendChild(tbody);
                 const miniHeader = document.createElement('div');
@@ -699,21 +718,505 @@ document.addEventListener('DOMContentLoaded', () => {
         return num;
     }
 
-    // ========== GRÁFICOS (se mantienen igual que en la versión anterior) ==========
-    // Nota: Por brevedad, se incluye solo la declaración de las funciones; en la práctica el código completo está presente.
-    // En esta entrega final se incluyen las funciones completas (tal como estaban en la versión anterior).
-    // Se ha omitido la repetición por legibilidad, pero el archivo final las contiene.
-
+    // ========== GRÁFICOS (con exclusión de la última fila para Mes, Cedis Mes, Trimestre, Cartera Vencida) ==========
     function showFamiliesPieChart(sheetName, headers, rowsData, mode) {
-        // ... (código idéntico al anterior)
+        const isPeriodo = (mode === 0);
+        const ventaColName = isPeriodo ? 'venta periodo act.' : 'venta trimestre act.';
+        const varColName = isPeriodo ? 'periodo act. vs periodo ant.' : 'trimestre act. vs trimestre ant.';
+        
+        let ventaIdx = -1, varIdx = -1;
+        for (let i = 0; i < headers.length; i++) {
+            const h = normalizeString(headers[i]);
+            if (h.includes(ventaColName)) ventaIdx = i;
+            if (h.includes(varColName)) varIdx = i;
+        }
+        if (ventaIdx === -1 || varIdx === -1) {
+            alert(`No se encontraron las columnas requeridas (${isPeriodo ? 'Venta periodo Act.' : 'Venta trimestre Act.'} o la de variación).`);
+            return null;
+        }
+        
+        let items = [];
+        for (let i = 0; i < rowsData.length; i++) {
+            let rawVenta = rowsData[i][ventaIdx];
+            let ventaNum = parseFloat(String(rawVenta).replace(/[^0-9.-]/g, ''));
+            if (isNaN(ventaNum)) continue;
+            let rawVar = rowsData[i][varIdx];
+            let varNum = parsePercentageValue(rawVar);
+            if (isNaN(varNum)) continue;
+            let label = (headers[0] && ventaIdx !== 0) ? String(rowsData[i][0] || `Fila ${i+1}`) : `Fila ${i+1}`;
+            items.push({ label, venta: ventaNum, variacion: varNum });
+        }
+        
+        items.sort((a, b) => b.venta - a.venta);
+        const top40 = items.slice(0, 40);
+        let negativos = top40.filter(item => item.variacion < 0);
+        negativos.sort((a, b) => a.variacion - b.variacion);
+        const topNegativos = negativos.slice(0, 10);
+        
+        if (topNegativos.length === 0) {
+            alert(`No se encontraron valores negativos en la variación para mostrar.`);
+            return null;
+        }
+        
+        const labels = topNegativos.map(item => item.label);
+        const values = topNegativos.map(item => Math.abs(item.variacion));
+        const datasetLabel = isPeriodo ? "Periodo Act. vs Periodo Ant. (%)" : "Trimestre Act. vs Trimestre Ant. (%)";
+        return { labels, values, datasetLabel };
     }
 
     function showCedisCarteraVencidaChart(sheetName, headers, rowsData) {
-        // ... (código idéntico)
+        let mayIdx = -1;
+        for (let i = 0; i < headers.length; i++) {
+            if (normalizeString(headers[i]) === 'may') {
+                mayIdx = i;
+                break;
+            }
+        }
+        if (mayIdx === -1) {
+            alert("No se encontró la columna 'May' en la hoja 'cedis cartera vencida'.");
+            return null;
+        }
+        
+        const maxRows = Math.min(rowsData.length, 15);
+        const labels = [];
+        const values = [];
+        for (let i = 0; i < maxRows; i++) {
+            let label = `Fila ${i+1}`;
+            if (headers[0] && mayIdx !== 0) {
+                let firstVal = rowsData[i][0];
+                if (firstVal !== undefined && firstVal !== "") label = String(firstVal).substring(0, 30);
+            }
+            let rawVal = rowsData[i][mayIdx];
+            let num = parseFloat(String(rawVal).replace(/[^0-9.-]/g, ''));
+            if (isNaN(num)) num = 0;
+            labels.push(label);
+            values.push(num);
+        }
+        return { labels, values, datasetLabel: headers[mayIdx] };
     }
 
     function showChartForSheet(sheetName, headers, rowsData, worksheet) {
-        // ... (código idéntico al anterior, con exclusión de última fila para Mes, Cedis Mes, Trimestre, Cartera Vencida)
+        const sheetLower = normalizeString(sheetName);
+        
+        if (sheetLower === 'dn' || sheetLower === 'resumen') {
+            const chartContainer = document.getElementById('chartContainer');
+            chartContainer.style.display = 'none';
+            if (currentChart) {
+                currentChart.destroy();
+                currentChart = null;
+            }
+            return;
+        }
+        
+        if (sheetLower === 'familias') {
+            if (familiasMode[sheetName] === undefined) familiasMode[sheetName] = 0;
+            const currentMode = familiasMode[sheetName];
+            const chartData = showFamiliesPieChart(sheetName, headers, rowsData, currentMode);
+            if (!chartData) return;
+            const { labels, values, datasetLabel } = chartData;
+            
+            const chartContainer = document.getElementById('chartContainer');
+            const chartTitle = document.getElementById('chartTitle');
+            const modeDisplay = (currentMode === 0) ? "Periodo vs Periodo" : "Trimestre vs Trimestre";
+            chartTitle.textContent = `Gráfico: ${sheetName} (${modeDisplay})`;
+            
+            familiasMode[sheetName] = (currentMode + 1) % 2;
+            
+            const isDark = document.body.classList.contains('dark-theme');
+            const textColor = isDark ? '#ffffff' : '#1e293b';
+            const backgroundColors = labels.map((_, i) => `hsl(${(i * 360 / labels.length) % 360}, 70%, 50%)`);
+            const legendFontSize = 10;
+            const tooltipFontSize = 9;
+            
+            const ctx = document.getElementById('barChart').getContext('2d');
+            if (currentChart) currentChart.destroy();
+            currentChart = new Chart(ctx, {
+                type: 'pie',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: datasetLabel,
+                        data: values,
+                        backgroundColor: backgroundColors,
+                        borderColor: isDark ? '#333' : '#fff',
+                        borderWidth: 1,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: { position: 'right', labels: { color: textColor, font: { size: legendFontSize, weight: 'bold' } } },
+                        tooltip: { 
+                            callbacks: { label: (ctx) => `${ctx.label}: ${ctx.raw.toFixed(1)}%` },
+                            titleColor: textColor,
+                            bodyColor: textColor,
+                            backgroundColor: isDark ? '#333' : '#fff',
+                            titleFont: { size: tooltipFontSize },
+                            bodyFont: { size: tooltipFontSize }
+                        }
+                    }
+                }
+            });
+            chartContainer.style.display = 'block';
+            return;
+        }
+        
+        if (sheetLower === 'cedis cartera vencida') {
+            const chartData = showCedisCarteraVencidaChart(sheetName, headers, rowsData);
+            if (!chartData) return;
+            const { labels, values, datasetLabel } = chartData;
+            
+            const chartContainer = document.getElementById('chartContainer');
+            const chartTitle = document.getElementById('chartTitle');
+            chartTitle.textContent = `Gráfico: ${sheetName} - ${datasetLabel} (primeros 15)`;
+            
+            const isDark = document.body.classList.contains('dark-theme');
+            const barColor = isDark ? '#d32f2f' : '#2563eb';
+            const textColor = isDark ? '#ffffff' : '#1e293b';
+            const gridColor = isDark ? '#555' : '#ccc';
+            const legendFontSize = 10;
+            const tooltipFontSize = 9;
+            const yTickFont = 9;
+            const xTickFont = 8;
+            
+            const ctx = document.getElementById('barChart').getContext('2d');
+            if (currentChart) currentChart.destroy();
+            currentChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: datasetLabel,
+                        data: values,
+                        backgroundColor: barColor,
+                        borderColor: barColor,
+                        borderWidth: 1,
+                        borderRadius: 6,
+                        barPercentage: 0.5,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: { labels: { color: textColor, font: { size: legendFontSize, weight: 'bold' } } },
+                        tooltip: { 
+                            callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.raw.toLocaleString('es-MX')}` },
+                            titleColor: textColor,
+                            bodyColor: textColor,
+                            backgroundColor: isDark ? '#333' : '#fff',
+                            borderColor: '#d32f2f',
+                            titleFont: { size: tooltipFontSize },
+                            bodyFont: { size: tooltipFontSize }
+                        }
+                    },
+                    scales: {
+                        y: { grid: { color: gridColor }, ticks: { color: textColor, font: { size: yTickFont } } },
+                        x: { ticks: { color: textColor, maxRotation: 45, minRotation: 45, font: { size: xTickFont } } }
+                    }
+                }
+            });
+            chartContainer.style.display = 'block';
+            return;
+        }
+        
+        // Resto de hojas (Mes, Cartera vencida, Semaforizacion gerente, Venta diaria, Cedis Mes, Trimestre, etc.)
+        const chartContainer = document.getElementById('chartContainer');
+        const chartTitle = document.getElementById('chartTitle');
+        chartTitle.textContent = `Gráfico: ${sheetName}`;
+
+        let labels = [];
+        let values = [];
+        let datasetLabel = '';
+        let barColors = [];
+
+        // ========== EXCLUSIÓN DE LA ÚLTIMA FILA PARA LAS HOJAS SOLICITADAS ==========
+        let effectiveRowsData = rowsData;
+        if (sheetLower === 'mes' || sheetLower === 'cedis mes' || sheetLower === 'trimestre' || sheetLower === 'cartera vencida') {
+            if (rowsData.length > 0) {
+                effectiveRowsData = rowsData.slice(0, -1); // Quitar la última fila
+            }
+        }
+
+        if (sheetLower === 'mes') {
+            let valueColIndex = -1;
+            for (let i = 0; i < headers.length; i++) {
+                const lower = normalizeString(headers[i]);
+                if (lower.includes('cubrimiento') && lower.includes('cuota')) {
+                    valueColIndex = i;
+                    datasetLabel = headers[i];
+                    break;
+                }
+            }
+            if (valueColIndex === -1) {
+                alert("No se encontró la columna 'cubrimiento de cuota' en la hoja Mes.");
+                chartContainer.style.display = 'none';
+                return;
+            }
+            const dataPoints = [];
+            for (let i = 0; i < effectiveRowsData.length; i++) {
+                let label = `Fila ${i+1}`;
+                if (headers[0] && valueColIndex !== 0) {
+                    let firstVal = effectiveRowsData[i][0];
+                    if (firstVal !== undefined && firstVal !== "") label = String(firstVal).substring(0, 30);
+                }
+                let rawVal = effectiveRowsData[i][valueColIndex];
+                let percentVal = parseToPercentage(rawVal, 1);
+                let numeric = percentVal.numeric;
+                if (isNaN(numeric)) numeric = 0;
+                dataPoints.push({ label, value: numeric });
+            }
+            dataPoints.sort((a, b) => b.value - a.value);
+            labels = dataPoints.map(dp => dp.label);
+            values = dataPoints.map(dp => dp.value);
+            const isDark = document.body.classList.contains('dark-theme');
+            barColors = values.map(v => {
+                if (v >= 100) return isDark ? '#1e4d3a' : '#22c55e';
+                if (v >= 90) return isDark ? '#6b5a1a' : '#eab308';
+                return isDark ? '#5e2a2a' : '#ef4444';
+            });
+            datasetLabel = "Cubrimiento de cuota (%)";
+        }
+        else if (sheetLower === 'cartera vencida') {
+            let valueColIndex = -1;
+            for (let i = 0; i < headers.length; i++) {
+                if (normalizeString(headers[i]).includes('suma de % 15 dias')) {
+                    valueColIndex = i;
+                    datasetLabel = headers[i];
+                    break;
+                }
+            }
+            if (valueColIndex === -1) {
+                alert("No se encontró la columna 'Suma de % 15 dias'.");
+                chartContainer.style.display = 'none';
+                return;
+            }
+            const dataPoints = [];
+            for (let i = 0; i < effectiveRowsData.length; i++) {
+                let label = `Fila ${i+1}`;
+                if (headers[0] && valueColIndex !== 0) {
+                    let firstVal = effectiveRowsData[i][0];
+                    if (firstVal !== undefined && firstVal !== "") label = String(firstVal).substring(0, 30);
+                }
+                let rawVal = effectiveRowsData[i][valueColIndex];
+                let percentVal = parseToPercentage(rawVal, 2);
+                let numeric = percentVal.numeric;
+                if (isNaN(numeric)) numeric = 0;
+                dataPoints.push({ label, value: numeric });
+            }
+            dataPoints.sort((a, b) => b.value - a.value);
+            labels = dataPoints.map(dp => dp.label);
+            values = dataPoints.map(dp => dp.value);
+            const isDark = document.body.classList.contains('dark-theme');
+            barColors = dataPoints.map(dp => {
+                if (dp.value > 3.50) return isDark ? '#f59e0b' : '#eab308';
+                return isDark ? '#d32f2f' : '#2563eb';
+            });
+            datasetLabel = "Suma de % 15 dias (%)";
+        }
+        else if (sheetLower === 'semaforizacion gerente') {
+            let gerenteIdx = -1, promedioIdx = -1;
+            for (let i = 0; i < headers.length; i++) {
+                const h = normalizeString(headers[i]);
+                if (h === 'gerente') gerenteIdx = i;
+                if (h === 'promedio') promedioIdx = i;
+            }
+            if (gerenteIdx === -1 || promedioIdx === -1) {
+                alert("No se encontraron las columnas 'gerente' o 'promedio'.");
+                chartContainer.style.display = 'none';
+                return;
+            }
+            const dataPoints = [];
+            for (let i = 0; i < effectiveRowsData.length; i++) {
+                let gerente = String(effectiveRowsData[i][gerenteIdx] || `Fila ${i+1}`);
+                let promedioRaw = effectiveRowsData[i][promedioIdx];
+                let percentVal = parseToPercentage(promedioRaw, 0);
+                let numeric = percentVal.numeric;
+                if (isNaN(numeric)) numeric = 0;
+                dataPoints.push({ label: gerente, value: numeric });
+            }
+            dataPoints.sort((a, b) => b.value - a.value);
+            labels = dataPoints.map(dp => dp.label);
+            values = dataPoints.map(dp => dp.value);
+            const isDark = document.body.classList.contains('dark-theme');
+            barColors = dataPoints.map(dp => {
+                if (dp.value < 90) return isDark ? '#ef4444' : '#dc2626';
+                if (dp.value > 99) return isDark ? '#22c55e' : '#16a34a';
+                return isDark ? '#eab308' : '#ca8a04';
+            });
+            datasetLabel = "Promedio (%)";
+        }
+        else if (sheetLower === 'venta diaria' && worksheet) {
+            const columns = ['A', 'B', 'C', 'D', 'E', 'F'];
+            for (let row = 18; row >= 2; row -= 2) {
+                for (let col of columns) {
+                    const xCellAddr = `${col}${row}`;
+                    const yCellAddr = `${col}${row + 1}`;
+                    const xCell = worksheet[xCellAddr];
+                    const yCell = worksheet[yCellAddr];
+                    if (xCell && xCell.v !== undefined && xCell.v !== null && 
+                        yCell && yCell.v !== undefined && yCell.v !== null) {
+                        let label = String(xCell.v).trim();
+                        if (label === "") label = `${col}${row}`;
+                        let yValue = parseFloat(yCell.v);
+                        if (!isNaN(yValue)) {
+                            labels.push(label);
+                            values.push(yValue);
+                        }
+                    }
+                }
+            }
+            const isDark = document.body.classList.contains('dark-theme');
+            barColors = labels.map(() => isDark ? '#3b82f6' : '#2563eb');
+            datasetLabel = "Valor (moneda)";
+        }
+        else if (sheetLower === 'cedis mes' || sheetLower === 'trimestre') {
+            let valueColIndex = -1;
+            for (let i = 0; i < headers.length; i++) {
+                const lower = normalizeString(headers[i]);
+                if (lower.includes('cubrimiento') && lower.includes('cuota')) {
+                    valueColIndex = i;
+                    datasetLabel = headers[i];
+                    break;
+                }
+            }
+            if (valueColIndex === -1) {
+                alert("No se encontró la columna 'cubrimiento de cuota'.");
+                chartContainer.style.display = 'none';
+                return;
+            }
+            const dataPoints = [];
+            for (let i = 0; i < effectiveRowsData.length; i++) {
+                let label = `Fila ${i+1}`;
+                if (headers[0] && valueColIndex !== 0) {
+                    let firstVal = effectiveRowsData[i][0];
+                    if (firstVal !== undefined && firstVal !== "") label = String(firstVal).substring(0, 30);
+                }
+                let rawVal = effectiveRowsData[i][valueColIndex];
+                let percentVal = parseToPercentage(rawVal, 1);
+                let numeric = percentVal.numeric;
+                if (isNaN(numeric)) numeric = 0;
+                dataPoints.push({ label, value: numeric });
+            }
+            dataPoints.sort((a, b) => b.value - a.value);
+            labels = dataPoints.map(dp => dp.label);
+            values = dataPoints.map(dp => dp.value);
+            const isDark = document.body.classList.contains('dark-theme');
+            barColors = values.map(v => {
+                if (v >= 100) return isDark ? '#1e4d3a' : '#22c55e';
+                if (v >= 90) return isDark ? '#6b5a1a' : '#eab308';
+                return isDark ? '#5e2a2a' : '#ef4444';
+            });
+            datasetLabel = "Cubrimiento de cuota (%)";
+        }
+        else {
+            // Genérico para otras hojas (no aplica exclusión de última fila)
+            let valueColIndex = -1;
+            for (let i = 0; i < headers.length; i++) {
+                const lower = normalizeString(headers[i]);
+                if (lower.includes('venta') || lower.includes('cuota') || lower.includes('estimado') || 
+                    lower.includes('cubrimiento') || lower.includes('%var') || lower === 'abr' || lower === 'feb' || lower === 'mzo') {
+                    valueColIndex = i;
+                    datasetLabel = headers[i];
+                    break;
+                }
+            }
+            if (valueColIndex === -1 && headers.length > 1) {
+                valueColIndex = 1;
+                datasetLabel = headers[1];
+            }
+            if (valueColIndex === -1) {
+                alert("No se encontró una columna numérica adecuada.");
+                chartContainer.style.display = 'none';
+                return;
+            }
+            const maxRows = Math.min(rowsData.length, 15);
+            for (let i = 0; i < maxRows; i++) {
+                let label = `Fila ${i+1}`;
+                if (headers[0] && valueColIndex !== 0) {
+                    let firstVal = rowsData[i][0];
+                    if (firstVal !== undefined && firstVal !== "") label = String(firstVal).substring(0, 20);
+                }
+                let rawVal = rowsData[i][valueColIndex];
+                let num = parseFloat(String(rawVal).replace(/[^0-9.-]/g, ''));
+                if (isNaN(num)) num = 0;
+                labels.push(label);
+                values.push(num);
+            }
+            const isDark = document.body.classList.contains('dark-theme');
+            barColors = labels.map(() => isDark ? '#d32f2f' : '#2563eb');
+        }
+
+        if (labels.length === 0) {
+            alert("No se encontraron datos válidos para generar el gráfico.");
+            chartContainer.style.display = 'none';
+            return;
+        }
+
+        const isDark = document.body.classList.contains('dark-theme');
+        const textColor = isDark ? '#ffffff' : '#1e293b';
+        const gridColor = isDark ? '#555' : '#ccc';
+
+        let legendFontSize = 13;
+        let tooltipTitleFont = 12;
+        let tooltipBodyFont = 12;
+        let yTickFont = 12;
+        let xTickFont = 11;
+
+        if (sheetLower === 'mes' || sheetLower === 'cedis cartera vencida') {
+            legendFontSize = 10;
+            tooltipTitleFont = 9;
+            tooltipBodyFont = 9;
+            yTickFont = 9;
+            xTickFont = 8;
+        }
+
+        const ctx = document.getElementById('barChart').getContext('2d');
+        if (currentChart) currentChart.destroy();
+        currentChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: datasetLabel,
+                    data: values,
+                    backgroundColor: barColors,
+                    borderColor: barColors,
+                    borderWidth: 1,
+                    borderRadius: 6,
+                    barPercentage: 0.5,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: { labels: { color: textColor, font: { size: legendFontSize, weight: 'bold' } } },
+                    tooltip: { 
+                        callbacks: { 
+                            label: (ctx) => {
+                                let suffix = '';
+                                if (sheetLower === 'cedis mes' || sheetLower === 'trimestre' || sheetLower === 'cartera vencida' || sheetLower === 'semaforizacion gerente' || sheetLower === 'mes')
+                                    suffix = '%';
+                                return `${ctx.dataset.label}: ${ctx.raw.toLocaleString('es-MX')}${suffix}`;
+                            }
+                        },
+                        titleColor: textColor,
+                        bodyColor: textColor,
+                        backgroundColor: isDark ? '#333' : '#fff',
+                        borderColor: '#d32f2f',
+                        titleFont: { size: tooltipTitleFont },
+                        bodyFont: { size: tooltipBodyFont }
+                    }
+                },
+                scales: {
+                    y: { grid: { color: gridColor }, ticks: { color: textColor, font: { size: yTickFont } } },
+                    x: { ticks: { color: textColor, maxRotation: 45, minRotation: 45, font: { size: xTickFont } } }
+                }
+            }
+        });
+        chartContainer.style.display = 'block';
     }
 
     // ========== EXPORTACIÓN Y UTILIDADES ==========
