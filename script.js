@@ -1,12 +1,13 @@
 /**
  * script.js - Dashboard Ejecutivo GAFI Ferrelectrico
- * - Hoja "familias": gráfico circular (pie) con colores, celdas de variación coloreadas (verde/rojo)
- * - Hoja "cedis cartera vencida": columnas B/C/D moneda sin decimales, gráfico de columna "May" (primeros 15)
- * - Resto de hojas sin cambios
+ * - Hoja "resumen": minicards premium, primera fila numérica tamaño +8 medidas.
+ * - Hoja "DN": eliminación de filas vacías y de las últimas 2 filas con datos.
+ * - Resto de hojas sin cambios (familias, cedis cartera vencida, mes, etc.)
+ * - Gráficos, temas, exportación, etc. completamente funcionales.
  */
 
 let currentSheetsData = [];
-let sheetVisibility = {};
+let selectedSheetName = null;
 let currentChart = null;
 let familiasMode = {};
 
@@ -74,14 +75,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
             workbook.SheetNames.forEach(sheetName => {
                 const worksheet = workbook.Sheets[sheetName];
-                const jsonRows = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+                const jsonRows = XLSX.utils.sheet_to_json(worksheet, { defval: "", header: 1 });
                 if (jsonRows.length === 0) {
-                    sheetsData.push({ sheetName, rowsData: [], headers: [], worksheet });
+                    sheetsData.push({ sheetName, rowsData: [], headers: [], worksheet, rawRows: [] });
                     return;
                 }
-                const headers = Object.keys(jsonRows[0]);
-                const rowsData = jsonRows.map(row => headers.map(h => row[h] ?? ""));
-                sheetsData.push({ sheetName, rowsData, headers, worksheet });
+                const headers = jsonRows[0] || [];
+                const rowsData = jsonRows.slice(1).map(row => headers.map((_, i) => row[i] ?? ""));
+                sheetsData.push({ sheetName, rowsData, headers, worksheet, rawRows: jsonRows });
             });
 
             if (sheetsData.length === 0) {
@@ -90,19 +91,19 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             currentSheetsData = sheetsData;
-            sheetVisibility = {};
             familiasMode = {};
-            currentSheetsData.forEach(sheet => { sheetVisibility[sheet.sheetName] = true; });
-
-            renderCheckboxesPanel();
-            renderAllTables();
+            if (currentSheetsData.length > 0) {
+                selectedSheetName = currentSheetsData[0].sheetName;
+            }
+            renderRadioButtons();
+            renderSelectedTable();
         };
         reader.onerror = () => alert("Error al leer el archivo.");
         reader.readAsArrayBuffer(file);
     }
 
-    function renderCheckboxesPanel() {
-        const container = document.getElementById('sheetsCheckboxes');
+    function renderRadioButtons() {
+        const container = document.getElementById('sheetsRadioGroup');
         if (!container) return;
         if (!currentSheetsData.length) {
             container.innerHTML = '<div class="placeholder-text">Cargue un archivo Excel para visualizar hojas.</div>';
@@ -111,38 +112,53 @@ document.addEventListener('DOMContentLoaded', () => {
         container.innerHTML = '';
         currentSheetsData.forEach(sheet => {
             const sheetName = sheet.sheetName;
-            const isChecked = sheetVisibility[sheetName] !== false;
+            const isChecked = (selectedSheetName === sheetName);
             const div = document.createElement('div');
-            div.className = 'checkbox-item';
+            div.className = 'radio-item';
             div.innerHTML = `
-                <input type="checkbox" id="chk_${escapeId(sheetName)}" ${isChecked ? 'checked' : ''}>
-                <label for="chk_${escapeId(sheetName)}">${escapeHtml(sheetName)}</label>
+                <input type="radio" name="sheetSelector" id="radio_${escapeId(sheetName)}" value="${escapeHtml(sheetName)}" ${isChecked ? 'checked' : ''}>
+                <label for="radio_${escapeId(sheetName)}">${escapeHtml(sheetName)}</label>
             `;
-            const checkbox = div.querySelector('input');
-            checkbox.addEventListener('change', (e) => {
-                sheetVisibility[sheetName] = e.target.checked;
-                updateTablesVisibility();
+            const radio = div.querySelector('input');
+            radio.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    selectedSheetName = sheetName;
+                    renderSelectedTable();
+                    chartContainer.style.display = 'none';
+                    if (currentChart) {
+                        currentChart.destroy();
+                        currentChart = null;
+                    }
+                }
             });
             container.appendChild(div);
         });
     }
 
-    function renderAllTables() {
+    function renderSelectedTable() {
         const viewport = document.getElementById('sheetsViewport');
         viewport.innerHTML = '';
         if (!currentSheetsData.length) {
             showEmptyState("No hay hojas para mostrar.");
             return;
         }
-        currentSheetsData.forEach(sheet => {
-            const card = createSheetCard(sheet);
+        const selectedSheet = currentSheetsData.find(s => s.sheetName === selectedSheetName);
+        if (selectedSheet) {
+            const card = createSheetCard(selectedSheet);
             viewport.appendChild(card);
-        });
-        updateTablesVisibility();
+        } else {
+            showEmptyState("Seleccione una hoja válida.");
+        }
+    }
+
+    function isNumericValue(value) {
+        if (value === null || value === undefined || value === "") return false;
+        const num = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
+        return !isNaN(num);
     }
 
     function createSheetCard(sheet) {
-        const { sheetName, rowsData, headers, worksheet } = sheet;
+        const { sheetName, rowsData, headers, worksheet, rawRows } = sheet;
         const card = document.createElement('div');
         card.className = 'sheet-card';
         card.setAttribute('data-sheetname', sheetName);
@@ -157,12 +173,251 @@ document.addEventListener('DOMContentLoaded', () => {
             <h3 class="sheet-title">${escapeHtml(sheetName)}</h3>
             <button class="btn-export-sheet" data-sheet="${escapeHtml(sheetName)}"><i class="fas fa-file-export"></i> Exportar hoja</button>
         `;
-        const tableWrapper = document.createElement('div');
-        tableWrapper.className = 'table-wrapper';
-        const table = buildDataTable(sheetName, headers, rowsData, worksheet);
-        tableWrapper.appendChild(table);
+        
+        const contentWrapper = document.createElement('div');
+        contentWrapper.className = 'sheet-content';
+        
+        // ========== HOJA "RESUMEN" (minicards) ==========
+        if (normalizeString(sheetName) === 'resumen' && rawRows && rawRows.length >= 2) {
+            const mainHeaders = rawRows[0] || [];
+            const subHeaders = rawRows[1] || [];
+            const groups = [];
+            let i = 0;
+            while (i < mainHeaders.length) {
+                const main = mainHeaders[i];
+                if (main && main.toString().trim() !== "") {
+                    if (i + 1 < subHeaders.length) {
+                        const sub1 = subHeaders[i] || "";
+                        const sub2 = subHeaders[i+1] || "";
+                        const dataRows = rawRows.slice(2);
+                        const values1 = dataRows.map(row => row[i] ?? "");
+                        const values2 = dataRows.map(row => row[i+1] ?? "");
+                        groups.push({
+                            title: main.toString(),
+                            subTitle1: sub1.toString(),
+                            subTitle2: sub2.toString(),
+                            data1: values1,
+                            data2: values2,
+                            colIndex: i
+                        });
+                    }
+                    i += 2;
+                } else {
+                    i++;
+                }
+            }
+            const maxGroups = 8;
+            const groupsToShow = groups.slice(0, maxGroups);
+            const gridContainer = document.createElement('div');
+            gridContainer.className = 'resumen-grid';
+            
+            const count = groupsToShow.length;
+            let cols = 4;
+            if (count <= 4) cols = 2;
+            else if (count <= 6) cols = 3;
+            else cols = 4;
+            gridContainer.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+            gridContainer.style.gridTemplateRows = `repeat(2, 1fr)`;
+            
+            // Umbral para DN desde celda F4 (rawRows[3][5])
+            let dnThreshold = null;
+            if (rawRows.length > 3 && rawRows[3] && rawRows[3][5] !== undefined && rawRows[3][5] !== "") {
+                const thresholdRaw = rawRows[3][5];
+                dnThreshold = parseFloat(String(thresholdRaw).replace(/[^0-9.-]/g, ''));
+                if (isNaN(dnThreshold)) dnThreshold = null;
+            }
+            
+            groupsToShow.forEach(group => {
+                const normalizedTitle = normalizeString(group.title);
+                const isDN = normalizedTitle === 'dn';
+                const singleRowGroups = ['mes', 'cedis mes', 'trimestre', 'cartera vencida', 'familias'];
+                const showOnlyFirstRow = singleRowGroups.includes(normalizedTitle);
+                const isSpecialGroup = (normalizedTitle === 'dn' || normalizedTitle === 'familias');
+                
+                const miniCard = document.createElement('div');
+                miniCard.className = 'resumen-mini-card';
+                
+                const table = document.createElement('table');
+                table.className = 'resumen-mini-table';
+                const thead = document.createElement('thead');
+                const headerRow = document.createElement('tr');
+                const th1 = document.createElement('th');
+                th1.textContent = group.subTitle1;
+                const th2 = document.createElement('th');
+                th2.textContent = group.subTitle2;
+                headerRow.appendChild(th1);
+                headerRow.appendChild(th2);
+                thead.appendChild(headerRow);
+                table.appendChild(thead);
+                
+                const tbody = document.createElement('tbody');
+                
+                // Funciones auxiliares
+                const parsePercentageNum = (value) => {
+                    if (value === null || value === undefined || value === "") return NaN;
+                    let num = 0;
+                    if (typeof value === 'number') {
+                        if (value <= 1 && value >= -1) num = value * 100;
+                        else num = value;
+                    } else {
+                        const str = String(value).trim().replace('%', '');
+                        let parsed = parseFloat(str);
+                        if (isNaN(parsed)) return NaN;
+                        if (parsed <= 1 && parsed >= -1 && !String(value).includes('%')) parsed = parsed * 100;
+                        num = parsed;
+                    }
+                    return num;
+                };
+                
+                const getColorClassForNormalGroup = (value, groupTitle) => {
+                    const titleNorm = normalizeString(groupTitle);
+                    const num = parsePercentageNum(value);
+                    if (isNaN(num)) return '';
+                    if (titleNorm === 'mes' || titleNorm === 'cedis mes' || titleNorm === 'trimestre') {
+                        if (num > 99.9) return 'cell-green';
+                        if (num < 90) return 'cell-red';
+                        return 'cell-yellow';
+                    } else if (titleNorm === 'cartera vencida') {
+                        if (num > 3.5) return 'cell-yellow';
+                        return 'cell-green';
+                    }
+                    return '';
+                };
+                
+                const formatNormalCell = (value, isRightColumn, groupTitle) => {
+                    if (value === null || value === undefined || value === "") return { display: "—", color: '' };
+                    let display = "—";
+                    let color = '';
+                    if (!isRightColumn) {
+                        const num = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
+                        if (!isNaN(num)) {
+                            display = formatCurrencyForResumen(value, true);
+                        } else {
+                            display = value.toString();
+                        }
+                    } else {
+                        const num = parsePercentageNum(value);
+                        if (!isNaN(num)) {
+                            const rounded = (Math.round(num * 10) / 10).toFixed(1);
+                            display = rounded + "%";
+                            color = getColorClassForNormalGroup(value, groupTitle);
+                        } else {
+                            display = value.toString();
+                        }
+                    }
+                    return { display, color };
+                };
+                
+                const formatFamiliesCell = (value) => {
+                    if (value === null || value === undefined || value === "") return { display: "—", color: '' };
+                    const num = parsePercentageNum(value);
+                    if (!isNaN(num)) {
+                        const rounded = Math.round(num);
+                        const color = (num > 0) ? 'cell-green' : 'cell-red';
+                        return { display: rounded + "%", color };
+                    }
+                    return { display: value.toString(), color: '' };
+                };
+                
+                const formatDNCell = (value, rowIndex) => {
+                    if (value === null || value === undefined || value === "") return { display: "—", color: '' };
+                    const num = parsePercentageNum(value);
+                    let display = "—";
+                    let color = '';
+                    if (!isNaN(num)) {
+                        const rounded = Math.round(num);
+                        display = rounded + "%";
+                        if (rowIndex === 0 && dnThreshold !== null && !isNaN(dnThreshold)) {
+                            color = (num > dnThreshold) ? 'cell-green' : 'cell-red';
+                        }
+                    } else {
+                        display = value.toString();
+                    }
+                    return { display, color };
+                };
+                
+                // Fila 2 (índice 0) - primera fila de datos
+                if (group.data1.length > 0 && group.data2.length > 0) {
+                    const row2 = document.createElement('tr');
+                    const leftValue = group.data1[0];
+                    const rightValue = group.data2[0];
+                    const isLeftNumeric = isNumericValue(leftValue);
+                    const isRightNumeric = isNumericValue(rightValue);
+                    if (isLeftNumeric || isRightNumeric) {
+                        row2.className = 'resumen-row-first';
+                    }
+                    let left, right;
+                    if (isDN) {
+                        left = formatDNCell(leftValue, 0);
+                        right = formatDNCell(rightValue, 0);
+                    } else if (normalizedTitle === 'familias') {
+                        left = formatFamiliesCell(leftValue);
+                        right = formatFamiliesCell(rightValue);
+                    } else {
+                        left = formatNormalCell(leftValue, false, group.title);
+                        right = formatNormalCell(rightValue, true, group.title);
+                    }
+                    const td1 = document.createElement('td');
+                    td1.textContent = left.display;
+                    if (left.color) td1.className = left.color;
+                    const td2 = document.createElement('td');
+                    td2.textContent = right.display;
+                    if (right.color) td2.className = right.color;
+                    row2.appendChild(td1);
+                    row2.appendChild(td2);
+                    tbody.appendChild(row2);
+                }
+                
+                // Fila 3 (índice 1) - solo si no es de fila única
+                if (!showOnlyFirstRow && group.data1.length > 1 && group.data2.length > 1) {
+                    const row3 = document.createElement('tr');
+                    let left, right;
+                    if (isDN) {
+                        left = formatDNCell(group.data1[1], 1);
+                        right = formatDNCell(group.data2[1], 1);
+                    } else if (normalizedTitle === 'familias') {
+                        left = formatFamiliesCell(group.data1[1]);
+                        right = formatFamiliesCell(group.data2[1]);
+                    } else {
+                        left = formatNormalCell(group.data1[1], false, group.title);
+                        right = formatNormalCell(group.data2[1], true, group.title);
+                    }
+                    const td1 = document.createElement('td');
+                    td1.textContent = left.display;
+                    if (left.color) td1.className = left.color;
+                    const td2 = document.createElement('td');
+                    td2.textContent = right.display;
+                    if (right.color) td2.className = right.color;
+                    if (isDN) {
+                        td1.style.fontSize = '0.65rem';
+                        td2.style.fontSize = '0.65rem';
+                    }
+                    row3.appendChild(td1);
+                    row3.appendChild(td2);
+                    tbody.appendChild(row3);
+                }
+                // Se eliminó la cuarta fila para DN
+                
+                table.appendChild(tbody);
+                const miniHeader = document.createElement('div');
+                miniHeader.className = 'resumen-mini-header';
+                miniHeader.textContent = group.title;
+                miniCard.appendChild(miniHeader);
+                miniCard.appendChild(table);
+                gridContainer.appendChild(miniCard);
+            });
+            contentWrapper.appendChild(gridContainer);
+        } else {
+            // Tablas normales
+            const tableWrapper = document.createElement('div');
+            tableWrapper.className = 'table-wrapper';
+            const table = buildDataTable(sheetName, headers, rowsData, worksheet);
+            tableWrapper.appendChild(table);
+            contentWrapper.appendChild(tableWrapper);
+        }
+        
         card.appendChild(headerDiv);
-        card.appendChild(tableWrapper);
+        card.appendChild(contentWrapper);
 
         const exportBtn = headerDiv.querySelector('.btn-export-sheet');
         exportBtn.addEventListener('click', (e) => {
@@ -171,8 +426,36 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         return card;
     }
+    
+    // Funciones auxiliares para resumen
+    function formatCurrencyForResumen(value, integerMode = true) {
+        if (value === null || value === undefined || value === "") return "—";
+        let num = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
+        if (isNaN(num)) return value.toString();
+        const options = integerMode 
+            ? { style: 'currency', currency: 'MXN', minimumFractionDigits: 0, maximumFractionDigits: 0 }
+            : { style: 'currency', currency: 'MXN', minimumFractionDigits: 2, maximumFractionDigits: 2 };
+        return new Intl.NumberFormat('es-MX', options).format(num);
+    }
+    
+    function formatPercentageForResumen(value, decimals = 1) {
+        if (value === null || value === undefined || value === "") return "—";
+        let num = 0;
+        if (typeof value === 'number') {
+            if (value <= 1 && value >= -1) num = value * 100;
+            else num = value;
+        } else {
+            const str = String(value).trim().replace('%', '');
+            let parsed = parseFloat(str);
+            if (isNaN(parsed)) return value.toString();
+            if (parsed <= 1 && parsed >= -1 && !String(value).includes('%')) parsed = parsed * 100;
+            num = parsed;
+        }
+        const rounded = (decimals === 0) ? Math.round(num) : (Math.round(num * Math.pow(10, decimals)) / Math.pow(10, decimals));
+        return rounded.toFixed(decimals) + "%";
+    }
 
-    // ========== CONSTRUCCIÓN DE TABLA ==========
+    // ========== CONSTRUCCIÓN DE TABLA ESTÁNDAR (CON FILTRADO PARA DN) ==========
     function buildDataTable(sheetName, headers, rowsData, worksheet) {
         const table = document.createElement('table');
         table.className = 'data-table';
@@ -196,30 +479,40 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
+        // Filtrar filas para hoja DN (vacías y últimas 2)
+        let dataRows = rowsData;
+        const sheetLower = normalizeString(sheetName);
+        if (sheetLower === 'dn') {
+            // 1. Eliminar filas completamente vacías
+            const nonEmptyRows = rowsData.filter(row => 
+                row.some(cell => cell !== undefined && cell !== null && cell !== "")
+            );
+            // 2. Eliminar las últimas 2 filas (si existen)
+            const filteredRows = nonEmptyRows.slice(0, -2);
+            dataRows = filteredRows;
+        }
+
         const tbody = document.createElement('tbody');
-        rowsData.forEach((row, rowIndex) => {
+        dataRows.forEach((row, rowIndex) => {
             const tr = document.createElement('tr');
             headers.forEach((header, idx) => {
                 const rawValue = row[idx];
                 let displayValue = rawValue;
                 let cellClass = '';
                 const lowerHeader = normalizeString(header);
-                const sheetLower = normalizeString(sheetName);
+                const sheetLowerLocal = normalizeString(sheetName);
 
-                // === REGLAS PARA "FAMILIAS" ===
-                if (sheetLower === 'familias') {
-                    // Columnas B, C, D, E (índices 1-4) moneda sin decimales
+                // Reglas especiales para distintas hojas
+                if (sheetLowerLocal === 'familias') {
                     if (idx >= 1 && idx <= 4) {
                         displayValue = formatCurrency(rawValue, true);
                         cellClass = 'currency-cell';
                     }
-                    // Columnas F, G (índices 5,6) porcentaje 1 decimal
                     else if (idx === 5 || idx === 6) {
                         const p = parseToPercentage(rawValue, 1);
                         displayValue = p.formatted;
                         cellClass = 'percentage-cell';
                     }
-                    // Columnas de variación: "Periodo Act. vs Periodo Ant." y "Trimestre Act. vs Trimestre Ant."
                     if (lowerHeader.includes('periodo act. vs periodo ant.') || lowerHeader.includes('trimestre act. vs trimestre ant.')) {
                         const numVal = parsePercentageValue(rawValue);
                         if (!isNaN(numVal)) {
@@ -228,32 +521,27 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     }
                 }
-
-                // === REGLAS PARA "CEDIS CARTERA VENCIDA" ===
-                else if (sheetLower === 'cedis cartera vencida') {
-                    // Columnas B, C, D (índices 1,2,3) moneda sin decimales
+                else if (sheetLowerLocal === 'cedis cartera vencida') {
                     if (idx >= 1 && idx <= 3) {
                         displayValue = formatCurrency(rawValue, true);
                         cellClass = 'currency-cell';
                     }
                 }
-
-                // Resto de reglas especiales (venta diaria, cartera vencida, semaforizacion gerente, etc.)
-                else if (sheetLower === 'venta diaria' && (rowIndex + 1) % 2 === 0) {
+                else if (sheetLowerLocal === 'venta diaria' && (rowIndex + 1) % 2 === 0) {
                     displayValue = formatCurrency(rawValue, false);
                     cellClass = 'currency-cell';
                 }
-                else if (sheetLower === 'cartera vencida' && lowerHeader.includes('suma de > 15 dias')) {
+                else if (sheetLowerLocal === 'cartera vencida' && lowerHeader.includes('suma de > 15 dias')) {
                     displayValue = formatCurrency(rawValue, true);
                     cellClass = 'currency-cell';
                 }
-                else if (sheetLower === 'cartera vencida' && lowerHeader.includes('suma de % 15 dias')) {
+                else if (sheetLowerLocal === 'cartera vencida' && lowerHeader.includes('suma de % 15 dias')) {
                     const p = parseToPercentage(rawValue, 2);
                     displayValue = p.formatted;
                     cellClass = 'percentage-cell';
                     if (p.numeric > 3.50) cellClass += ' cell-yellow';
                 }
-                else if (sheetLower === 'semaforizacion gerente') {
+                else if (sheetLowerLocal === 'semaforizacion gerente') {
                     const percentCols = ['4to trim 2024', '1er trim 2025', '2do trim 2025', '3er trim 2025', 'promedio'];
                     const isPercentCol = percentCols.some(c => lowerHeader.includes(c));
                     if (isPercentCol) {
@@ -266,7 +554,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 }
                 else {
-                    const isSemaforizacion = (sheetLower === 'semaforizacion');
+                    const isSemaforizacion = (sheetLowerLocal === 'semaforizacion');
                     if (isSemaforizacion && idx >= 2 && idx <= 6) {
                         const percentVal = parseToPercentage(rawValue, 2);
                         displayValue = percentVal.formatted;
@@ -281,7 +569,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (format.isPercentage) cellClass = 'percentage-cell';
                         if (format.isCurrency) cellClass = 'currency-cell';
 
-                        if (sheetLower === 'dn' && thresholdDN !== null) {
+                        if (sheetLowerLocal === 'dn' && thresholdDN !== null) {
                             if (lowerHeader.includes('% cub cuota venta') || lowerHeader.includes('% cub clientes')) {
                                 const percentValue = parseToPercentage(rawValue, 2);
                                 const numericPercent = percentValue.numeric;
@@ -291,7 +579,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             }
                         }
 
-                        if (lowerHeader.includes('cubrimiento') && lowerHeader.includes('cuota') && sheetLower !== 'dn' && !isSemaforizacion && sheetLower !== 'semaforizacion gerente' && sheetLower !== 'familias' && sheetLower !== 'cedis cartera vencida') {
+                        if (lowerHeader.includes('cubrimiento') && lowerHeader.includes('cuota') && sheetLowerLocal !== 'dn' && !isSemaforizacion && sheetLowerLocal !== 'semaforizacion gerente' && sheetLowerLocal !== 'familias' && sheetLowerLocal !== 'cedis cartera vencida' && sheetLowerLocal !== 'resumen') {
                             const percentValue = parseToPercentage(rawValue, 1);
                             const numericPercent = percentValue.numeric;
                             if (numericPercent < 90.0) cellClass += ' cell-red';
@@ -313,6 +601,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return table;
     }
 
+    // ========== FUNCIONES AUXILIARES ==========
     function normalizeString(str) {
         return str.toLowerCase()
             .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -378,7 +667,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function formatCurrency(value, integerMode = false) {
         if (value === null || value === undefined || value === "") return "—";
         let num = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
-        if (isNaN(num)) return "—";
+        if (isNaN(num)) return String(value);
         const options = integerMode 
             ? { style: 'currency', currency: 'MXN', minimumFractionDigits: 0, maximumFractionDigits: 0 }
             : { style: 'currency', currency: 'MXN', minimumFractionDigits: 2, maximumFractionDigits: 2 };
@@ -394,7 +683,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             const str = String(value).trim().replace('%', '');
             let parsed = parseFloat(str);
-            if (isNaN(parsed)) return { formatted: "—", numeric: 0 };
+            if (isNaN(parsed)) return { formatted: String(value), numeric: 0 };
             if (parsed <= 1 && parsed >= -1 && !String(value).includes('%')) parsed = parsed * 100;
             num = parsed;
         }
@@ -419,7 +708,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return num;
     }
 
-    // ========== GRÁFICO PARA "FAMILIAS" (circular) ==========
+    // ========== GRÁFICOS ==========
     function showFamiliesPieChart(sheetName, headers, rowsData, mode) {
         const isPeriodo = (mode === 0);
         const ventaColName = isPeriodo ? 'venta periodo act.' : 'venta trimestre act.';
@@ -460,14 +749,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         const labels = topNegativos.map(item => item.label);
-        const values = topNegativos.map(item => Math.abs(item.variacion)); // valores absolutos para el círculo
+        const values = topNegativos.map(item => Math.abs(item.variacion));
         const datasetLabel = isPeriodo ? "Periodo Act. vs Periodo Ant. (%)" : "Trimestre Act. vs Trimestre Ant. (%)";
         return { labels, values, datasetLabel };
     }
 
-    // ========== GRÁFICO PARA "CEDIS CARTERA VENCIDA" (columna May, primeros 15) ==========
     function showCedisCarteraVencidaChart(sheetName, headers, rowsData) {
-        // Buscar columna "May"
         let mayIdx = -1;
         for (let i = 0; i < headers.length; i++) {
             if (normalizeString(headers[i]) === 'may') {
@@ -480,7 +767,6 @@ document.addEventListener('DOMContentLoaded', () => {
             return null;
         }
         
-        // Tomar primeros 15 registros
         const maxRows = Math.min(rowsData.length, 15);
         const labels = [];
         const values = [];
@@ -499,11 +785,10 @@ document.addEventListener('DOMContentLoaded', () => {
         return { labels, values, datasetLabel: headers[mayIdx] };
     }
 
-    // ========== GRÁFICO PRINCIPAL ==========
     function showChartForSheet(sheetName, headers, rowsData, worksheet) {
         const sheetLower = normalizeString(sheetName);
         
-        if (sheetLower === 'dn') {
+        if (sheetLower === 'dn' || sheetLower === 'resumen') {
             const chartContainer = document.getElementById('chartContainer');
             chartContainer.style.display = 'none';
             if (currentChart) {
@@ -513,7 +798,6 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         
-        // --- Hoja "familias": gráfico circular ---
         if (sheetLower === 'familias') {
             if (familiasMode[sheetName] === undefined) familiasMode[sheetName] = 0;
             const currentMode = familiasMode[sheetName];
@@ -523,25 +807,21 @@ document.addEventListener('DOMContentLoaded', () => {
             
             const chartContainer = document.getElementById('chartContainer');
             const chartTitle = document.getElementById('chartTitle');
-            const modeText = currentMode === 0 ? "Periodo" : "Trimestre";
-            chartTitle.textContent = `Gráfico: ${sheetName} (${modeText} - Top 10 negativos)`;
+            const modeDisplay = (currentMode === 0) ? "Periodo vs Periodo" : "Trimestre vs Trimestre";
+            chartTitle.textContent = `Gráfico: ${sheetName} (${modeDisplay})`;
             
             familiasMode[sheetName] = (currentMode + 1) % 2;
             
             const isDark = document.body.classList.contains('dark-theme');
             const textColor = isDark ? '#ffffff' : '#1e293b';
-            
-            // Generar colores variados para el gráfico circular
             const backgroundColors = labels.map((_, i) => `hsl(${(i * 360 / labels.length) % 360}, 70%, 50%)`);
-            
-            // Tamaño de fuente reducido para esta hoja
             const legendFontSize = 10;
             const tooltipFontSize = 9;
             
             const ctx = document.getElementById('barChart').getContext('2d');
             if (currentChart) currentChart.destroy();
             currentChart = new Chart(ctx, {
-                type: 'pie',  // gráfico circular
+                type: 'pie',
                 data: {
                     labels: labels,
                     datasets: [{
@@ -572,7 +852,6 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         
-        // --- Hoja "cedis cartera vencida": gráfico de barras con columna May (primeros 15) ---
         if (sheetLower === 'cedis cartera vencida') {
             const chartData = showCedisCarteraVencidaChart(sheetName, headers, rowsData);
             if (!chartData) return;
@@ -586,8 +865,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const barColor = isDark ? '#d32f2f' : '#2563eb';
             const textColor = isDark ? '#ffffff' : '#1e293b';
             const gridColor = isDark ? '#555' : '#ccc';
-            
-            // Fuente reducida para esta hoja
             const legendFontSize = 10;
             const tooltipFontSize = 9;
             const yTickFont = 9;
@@ -634,7 +911,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         
-        // ========== RESTO DE HOJAS (sin cambios) ==========
+        // Resto de hojas (Mes, Cartera vencida, Semaforizacion gerente, Venta diaria, Cedis Mes, Trimestre, etc.)
         const chartContainer = document.getElementById('chartContainer');
         const chartTitle = document.getElementById('chartTitle');
         chartTitle.textContent = `Gráfico: ${sheetName}`;
@@ -647,11 +924,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (sheetLower === 'mes') {
             let valueColIndex = -1;
             for (let i = 0; i < headers.length; i++) {
-                const header = headers[i];
-                const lower = normalizeString(header);
+                const lower = normalizeString(headers[i]);
                 if (lower.includes('cubrimiento') && lower.includes('cuota')) {
                     valueColIndex = i;
-                    datasetLabel = header;
+                    datasetLabel = headers[i];
                     break;
                 }
             }
@@ -780,11 +1056,10 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (sheetLower === 'cedis mes' || sheetLower === 'trimestre') {
             let valueColIndex = -1;
             for (let i = 0; i < headers.length; i++) {
-                const header = headers[i];
-                const lower = normalizeString(header);
+                const lower = normalizeString(headers[i]);
                 if (lower.includes('cubrimiento') && lower.includes('cuota')) {
                     valueColIndex = i;
-                    datasetLabel = header;
+                    datasetLabel = headers[i];
                     break;
                 }
             }
@@ -820,12 +1095,11 @@ document.addEventListener('DOMContentLoaded', () => {
         else {
             let valueColIndex = -1;
             for (let i = 0; i < headers.length; i++) {
-                const header = headers[i];
-                const lower = normalizeString(header);
+                const lower = normalizeString(headers[i]);
                 if (lower.includes('venta') || lower.includes('cuota') || lower.includes('estimado') || 
                     lower.includes('cubrimiento') || lower.includes('%var') || lower === 'abr' || lower === 'feb' || lower === 'mzo') {
                     valueColIndex = i;
-                    datasetLabel = header;
+                    datasetLabel = headers[i];
                     break;
                 }
             }
@@ -926,30 +1200,7 @@ document.addEventListener('DOMContentLoaded', () => {
         chartContainer.style.display = 'block';
     }
 
-    // ========== FUNCIONES DE ACTUALIZACIÓN Y EXPORTACIÓN ==========
-    function updateTablesVisibility() {
-        const cards = document.querySelectorAll('.sheet-card');
-        cards.forEach(card => {
-            const sheetName = card.getAttribute('data-sheetname');
-            card.style.display = sheetVisibility[sheetName] ? '' : 'none';
-        });
-        const anyVisible = Array.from(cards).some(c => c.style.display !== 'none');
-        if (!anyVisible && currentSheetsData.length > 0) {
-            if (!document.getElementById('tempEmptyMsg')) {
-                const viewport = document.getElementById('sheetsViewport');
-                const msg = document.createElement('div');
-                msg.id = 'tempEmptyMsg';
-                msg.className = 'empty-state';
-                msg.innerHTML = '<i class="fas fa-eye-slash"></i><p>Todas las hojas están ocultas. Active al menos un checkbox.</p>';
-                viewport.appendChild(msg);
-            }
-        } else {
-            const tempMsg = document.getElementById('tempEmptyMsg');
-            if (tempMsg) tempMsg.remove();
-        }
-        if (currentSheetsData.length === 0) showEmptyState("Cargue un archivo Excel.");
-    }
-
+    // ========== EXPORTACIÓN Y UTILIDADES ==========
     function exportSingleSheetToExcel(sheetName) {
         const sheet = currentSheetsData.find(s => s.sheetName === sheetName);
         if (!sheet) return;
