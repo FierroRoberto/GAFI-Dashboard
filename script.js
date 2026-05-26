@@ -1,9 +1,7 @@
 /**
  * script.js - Dashboard Ejecutivo GAFI Ferrelectrico
- * - Hoja "resumen": minicards premium, primera fila numérica tamaño +8 medidas.
- * - Hoja "DN": eliminación de filas vacías y de las últimas 2 filas con datos.
- * - Resto de hojas sin cambios (familias, cedis cartera vencida, mes, etc.)
- * - Gráficos, temas, exportación, etc. completamente funcionales.
+ * - Hoja "familias": clic en el gráfico también alterna entre Periodo y Trimestre.
+ * - Resto de funcionalidades igual.
  */
 
 let currentSheetsData = [];
@@ -58,6 +56,23 @@ document.addEventListener('DOMContentLoaded', () => {
         if (currentChart) {
             currentChart.destroy();
             currentChart = null;
+        }
+    });
+
+    // Agregar evento de clic en el gráfico para alternar en la hoja "familias"
+    chartContainer.addEventListener('click', (e) => {
+        // Evitar que el clic en el botón de cerrar dispare el cambio
+        if (e.target.closest('.btn-close-chart')) return;
+        // Verificar si el gráfico está visible y la hoja actual es "familias"
+        if (chartContainer.style.display !== 'block') return;
+        const chartTitleElem = document.getElementById('chartTitle');
+        if (!chartTitleElem) return;
+        let sheetName = chartTitleElem.textContent.replace('Gráfico: ', '');
+        // Quitar posibles sufijos como " (Periodo vs Periodo)" para obtener el nombre real
+        if (sheetName.includes(' (')) sheetName = sheetName.split(' (')[0];
+        const sheet = currentSheetsData.find(s => s.sheetName === sheetName);
+        if (sheet && normalizeString(sheetName) === 'familias') {
+            showChartForSheet(sheet.sheetName, sheet.headers, sheet.rowsData, sheet.worksheet);
         }
     });
 
