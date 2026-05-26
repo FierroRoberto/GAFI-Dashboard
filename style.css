@@ -498,13 +498,13 @@ body.dark-theme .cell-yellow {
     color: var(--accent-color);
 }
 
-/* ========== ESTILOS ADAPTATIVOS PARA LA HOJA "RESUMEN" ========== */
+/* ========== ESTILOS ADAPTATIVOS PARA LA HOJA "RESUMEN" CON SCROLL ========== */
 .resumen-grid {
     display: grid;
     gap: 1rem;
     padding: 0.5rem;
     width: 100%;
-    height: auto;
+    height: 100%;
     overflow-y: auto;
     overflow-x: auto;
     max-height: 100%;
@@ -521,7 +521,7 @@ body.dark-theme .cell-yellow {
     height: auto;
     display: flex;
     flex-direction: column;
-    min-width: 0; /* Permite que el contenido se ajuste */
+    min-width: 0;
 }
 
 .resumen-mini-card:hover {
@@ -546,7 +546,7 @@ body.dark-theme .cell-yellow {
     width: 100%;
     border-collapse: collapse;
     font-size: clamp(0.7rem, 3vw, 0.85rem);
-    table-layout: fixed; /* Ayuda a que las columnas se distribuyan */
+    table-layout: fixed;
 }
 
 .resumen-mini-table th {
@@ -572,9 +572,9 @@ body.dark-theme .cell-yellow {
     overflow-wrap: break-word;
 }
 
-/* Primera fila de datos: tamaño reducido en 2 medidas */
+/* Primera fila de datos: tamaño reducido 1 medida (max 0.9rem) */
 .resumen-row-first td {
-    font-size: clamp(0.7rem, 4vw, 0.95rem) !important;
+    font-size: clamp(0.65rem, 3.5vw, 0.9rem) !important;
     font-weight: 600;
     padding: 0.6rem 0.4rem;
 }
@@ -582,7 +582,7 @@ body.dark-theme .cell-yellow {
 .currency-value, .percentage-value {
     font-family: 'Inter', monospace;
     font-weight: 500;
-    white-space: nowrap; /* Evita que los valores se rompan en varias líneas */
+    white-space: nowrap;
 }
 
 .currency-value {
@@ -601,7 +601,7 @@ body.dark-theme .percentage-value {
     color: #fbbf24;
 }
 
-/* Fila pequeña para DN (segunda fila) */
+/* Fila pequeña para DN (segunda y tercera fila) */
 .resumen-row-small td {
     font-size: clamp(0.55rem, 2.5vw, 0.65rem) !important;
     padding: 0.2rem 0.3rem !important;
@@ -660,7 +660,7 @@ body.dark-theme .percentage-value {
         font-size: 0.65rem;
     }
     .currency-value, .percentage-value {
-        white-space: normal; /* En móvil, permitir que los valores largos se rompan */
+        white-space: normal;
     }
 }
 
@@ -678,7 +678,7 @@ body.dark-theme .percentage-value {
         font-size: 0.9rem;
     }
     .resumen-row-first td {
-        font-size: clamp(0.65rem, 4vw, 0.85rem) !important;
+        font-size: clamp(0.6rem, 4vw, 0.85rem) !important;
     }
 }
 
@@ -697,6 +697,6 @@ body.dark-theme .percentage-value {
         padding: 0.3rem;
     }
     .resumen-row-first td {
-        font-size: clamp(0.7rem, 3.5vw, 0.9rem) !important;
+        font-size: clamp(0.65rem, 3.5vw, 0.85rem) !important;
     }
 }
