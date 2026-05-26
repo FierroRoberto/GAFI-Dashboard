@@ -518,7 +518,7 @@ body.dark-theme .cell-yellow {
     overflow: hidden;
     transition: all 0.25s ease;
     backdrop-filter: blur(2px);
-    height: auto;           /* Altura natural según contenido */
+    height: auto;
     display: flex;
     flex-direction: column;
 }
@@ -565,9 +565,9 @@ body.dark-theme .cell-yellow {
     transition: background 0.15s;
 }
 
-/* Primera fila de datos: tamaño reducido en 4 medidas */
+/* Primera fila de datos: tamaño reducido en 2 medidas (desde 1.15rem a ~0.95rem en desktop) */
 .resumen-row-first td {
-    font-size: clamp(0.9rem, 5vw, 1.15rem) !important;
+    font-size: clamp(0.7rem, 4vw, 0.95rem) !important;
     font-weight: 600;
     padding: 0.6rem 0.4rem;
 }
@@ -667,7 +667,7 @@ body.dark-theme .percentage-value {
         font-size: 0.9rem;
     }
     .resumen-row-first td {
-        font-size: clamp(0.85rem, 5vw, 1rem) !important;
+        font-size: clamp(0.65rem, 4vw, 0.85rem) !important;
     }
 }
 
@@ -686,6 +686,6 @@ body.dark-theme .percentage-value {
         padding: 0.3rem;
     }
     .resumen-row-first td {
-        font-size: clamp(0.9rem, 4vw, 1rem) !important;
+        font-size: clamp(0.7rem, 3.5vw, 0.9rem) !important;
     }
 }
