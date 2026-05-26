@@ -353,7 +353,7 @@ html, body {
 
 .sheet-content {
     flex: 1;
-    overflow: hidden;
+    overflow: visible; /* Cambiado de 'hidden' para permitir scroll */
     display: flex;
     flex-direction: column;
 }
@@ -554,7 +554,7 @@ body.dark-theme .cell-yellow {
     padding: 0.5rem;
     font-weight: 700;
     color: var(--text-primary);
-    font-size: clamp(0.5rem, 2.4vw, 0.7rem); /* reducido 2 medidas */
+    font-size: clamp(0.5rem, 2.4vw, 0.7rem);
     text-transform: uppercase;
     letter-spacing: 0.5px;
     border-bottom: 1px solid var(--accent-color);
@@ -621,7 +621,7 @@ body.dark-theme .percentage-value {
     .resumen-grid {
         gap: 0.6rem;
         padding: 0.3rem;
-        grid-template-columns: 1fr !important; /* fuerza una columna en móvil */
+        grid-template-columns: 1fr !important;
     }
     .resumen-mini-table th,
     .resumen-mini-table td {
@@ -667,6 +667,14 @@ body.dark-theme .percentage-value {
         font-size: clamp(0.65rem, 3.5vw, 0.85rem) !important;
         padding: 0.4rem 0.2rem;
     }
+    /* Ajuste específico para móvil: asegurar scroll vertical */
+    .sheet-content {
+        overflow-y: auto;
+    }
+    .resumen-grid {
+        overflow-y: visible;
+        max-height: none;
+    }
 }
 
 @media (max-width: 480px) {
@@ -703,5 +711,13 @@ body.dark-theme .percentage-value {
     }
     .resumen-row-first td {
         font-size: clamp(0.6rem, 3vw, 0.8rem) !important;
+    }
+    /* En landscape, asegurar scroll vertical */
+    .sheet-content {
+        overflow-y: auto;
+    }
+    .resumen-grid {
+        overflow-y: visible;
+        max-height: none;
     }
 }
