@@ -1,5 +1,5 @@
 // service-worker.js — GAFI Ferrelectrico PWA v2
-const CACHE_NAME = 'gafi-dashboard-v2.72';
+const CACHE_NAME = 'gafi-dashboard-v2.73';
 
 const LOCAL_ASSETS = [
   './',
