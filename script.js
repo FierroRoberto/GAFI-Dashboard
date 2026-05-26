@@ -1,6 +1,6 @@
 /**
  * script.js - Dashboard Ejecutivo GAFI Ferrelectrico
- * - Hoja "familias": clic en el gráfico también alterna entre Periodo y Trimestre.
+ * - Para hojas Mes, Cedis Mes, Trimestre, Cartera Vencida: se excluye la última fila de datos en los gráficos.
  * - Resto de funcionalidades igual.
  */
 
@@ -59,16 +59,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Agregar evento de clic en el gráfico para alternar en la hoja "familias"
+    // Evento para clic en gráfico de familias (alternar)
     chartContainer.addEventListener('click', (e) => {
-        // Evitar que el clic en el botón de cerrar dispare el cambio
         if (e.target.closest('.btn-close-chart')) return;
-        // Verificar si el gráfico está visible y la hoja actual es "familias"
         if (chartContainer.style.display !== 'block') return;
         const chartTitleElem = document.getElementById('chartTitle');
         if (!chartTitleElem) return;
         let sheetName = chartTitleElem.textContent.replace('Gráfico: ', '');
-        // Quitar posibles sufijos como " (Periodo vs Periodo)" para obtener el nombre real
         if (sheetName.includes(' (')) sheetName = sheetName.split(' (')[0];
         const sheet = currentSheetsData.find(s => s.sheetName === sheetName);
         if (sheet && normalizeString(sheetName) === 'familias') {
@@ -232,7 +229,7 @@ document.addEventListener('DOMContentLoaded', () => {
             else if (count <= 6) cols = 3;
             else cols = 4;
             gridContainer.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-            gridContainer.style.gridTemplateRows = `repeat(2, 1fr)`;
+            // Altura natural (sin gridTemplateRows)
             
             // Umbral para DN desde celda F4 (rawRows[3][5])
             let dnThreshold = null;
@@ -498,11 +495,9 @@ document.addEventListener('DOMContentLoaded', () => {
         let dataRows = rowsData;
         const sheetLower = normalizeString(sheetName);
         if (sheetLower === 'dn') {
-            // 1. Eliminar filas completamente vacías
             const nonEmptyRows = rowsData.filter(row => 
                 row.some(cell => cell !== undefined && cell !== null && cell !== "")
             );
-            // 2. Eliminar las últimas 2 filas (si existen)
             const filteredRows = nonEmptyRows.slice(0, -2);
             dataRows = filteredRows;
         }
@@ -517,7 +512,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const lowerHeader = normalizeString(header);
                 const sheetLowerLocal = normalizeString(sheetName);
 
-                // Reglas especiales para distintas hojas
+                // Reglas especiales para distintas hojas (sin cambios)
                 if (sheetLowerLocal === 'familias') {
                     if (idx >= 1 && idx <= 4) {
                         displayValue = formatCurrency(rawValue, true);
@@ -723,7 +718,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return num;
     }
 
-    // ========== GRÁFICOS ==========
+    // ========== GRÁFICOS (con exclusión de la última fila para Mes, Cedis Mes, Trimestre, Cartera Vencida) ==========
     function showFamiliesPieChart(sheetName, headers, rowsData, mode) {
         const isPeriodo = (mode === 0);
         const ventaColName = isPeriodo ? 'venta periodo act.' : 'venta trimestre act.';
@@ -936,6 +931,14 @@ document.addEventListener('DOMContentLoaded', () => {
         let datasetLabel = '';
         let barColors = [];
 
+        // ========== EXCLUSIÓN DE LA ÚLTIMA FILA PARA LAS HOJAS SOLICITADAS ==========
+        let effectiveRowsData = rowsData;
+        if (sheetLower === 'mes' || sheetLower === 'cedis mes' || sheetLower === 'trimestre' || sheetLower === 'cartera vencida') {
+            if (rowsData.length > 0) {
+                effectiveRowsData = rowsData.slice(0, -1); // Quitar la última fila
+            }
+        }
+
         if (sheetLower === 'mes') {
             let valueColIndex = -1;
             for (let i = 0; i < headers.length; i++) {
@@ -952,13 +955,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             const dataPoints = [];
-            for (let i = 0; i < rowsData.length; i++) {
+            for (let i = 0; i < effectiveRowsData.length; i++) {
                 let label = `Fila ${i+1}`;
                 if (headers[0] && valueColIndex !== 0) {
-                    let firstVal = rowsData[i][0];
+                    let firstVal = effectiveRowsData[i][0];
                     if (firstVal !== undefined && firstVal !== "") label = String(firstVal).substring(0, 30);
                 }
-                let rawVal = rowsData[i][valueColIndex];
+                let rawVal = effectiveRowsData[i][valueColIndex];
                 let percentVal = parseToPercentage(rawVal, 1);
                 let numeric = percentVal.numeric;
                 if (isNaN(numeric)) numeric = 0;
@@ -990,13 +993,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             const dataPoints = [];
-            for (let i = 0; i < rowsData.length; i++) {
+            for (let i = 0; i < effectiveRowsData.length; i++) {
                 let label = `Fila ${i+1}`;
                 if (headers[0] && valueColIndex !== 0) {
-                    let firstVal = rowsData[i][0];
+                    let firstVal = effectiveRowsData[i][0];
                     if (firstVal !== undefined && firstVal !== "") label = String(firstVal).substring(0, 30);
                 }
-                let rawVal = rowsData[i][valueColIndex];
+                let rawVal = effectiveRowsData[i][valueColIndex];
                 let percentVal = parseToPercentage(rawVal, 2);
                 let numeric = percentVal.numeric;
                 if (isNaN(numeric)) numeric = 0;
@@ -1025,9 +1028,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             const dataPoints = [];
-            for (let i = 0; i < rowsData.length; i++) {
-                let gerente = String(rowsData[i][gerenteIdx] || `Fila ${i+1}`);
-                let promedioRaw = rowsData[i][promedioIdx];
+            for (let i = 0; i < effectiveRowsData.length; i++) {
+                let gerente = String(effectiveRowsData[i][gerenteIdx] || `Fila ${i+1}`);
+                let promedioRaw = effectiveRowsData[i][promedioIdx];
                 let percentVal = parseToPercentage(promedioRaw, 0);
                 let numeric = percentVal.numeric;
                 if (isNaN(numeric)) numeric = 0;
@@ -1084,13 +1087,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             const dataPoints = [];
-            for (let i = 0; i < rowsData.length; i++) {
+            for (let i = 0; i < effectiveRowsData.length; i++) {
                 let label = `Fila ${i+1}`;
                 if (headers[0] && valueColIndex !== 0) {
-                    let firstVal = rowsData[i][0];
+                    let firstVal = effectiveRowsData[i][0];
                     if (firstVal !== undefined && firstVal !== "") label = String(firstVal).substring(0, 30);
                 }
-                let rawVal = rowsData[i][valueColIndex];
+                let rawVal = effectiveRowsData[i][valueColIndex];
                 let percentVal = parseToPercentage(rawVal, 1);
                 let numeric = percentVal.numeric;
                 if (isNaN(numeric)) numeric = 0;
@@ -1108,6 +1111,7 @@ document.addEventListener('DOMContentLoaded', () => {
             datasetLabel = "Cubrimiento de cuota (%)";
         }
         else {
+            // Genérico para otras hojas (no aplica exclusión de última fila)
             let valueColIndex = -1;
             for (let i = 0; i < headers.length; i++) {
                 const lower = normalizeString(headers[i]);
