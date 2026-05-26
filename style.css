@@ -703,3 +703,11 @@ body.dark-theme .percentage-value {
         font-size: clamp(0.7rem, 3.5vw, 0.9rem) !important;
     }
 }
+
+{
+    box-sizing:border-box;
+}
+
+body{
+    overflow-x:hidden;
+}
