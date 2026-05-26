@@ -353,7 +353,7 @@ html, body {
 
 .sheet-content {
     flex: 1;
-    overflow: visible;  /* Cambiado de hidden a visible para permitir scroll natural */
+    overflow: visible;   /* Permite que el contenido exceda y se desplace naturalmente */
     display: flex;
     flex-direction: column;
 }
@@ -498,7 +498,7 @@ body.dark-theme .cell-yellow {
     color: var(--accent-color);
 }
 
-/* ========== ESTILOS ADAPTATIVOS PARA LA HOJA "RESUMEN" ========== */
+/* ========== ESTILOS PARA LA HOJA "RESUMEN" - CORREGIDOS ========== */
 .resumen-grid {
     display: grid;
     gap: 1rem;
@@ -542,13 +542,12 @@ body.dark-theme .cell-yellow {
     word-break: break-word;
 }
 
+/* Tabla interna - estilo estándar centrado */
 .resumen-mini-table {
     width: 100%;
     border-collapse: collapse;
     font-size: clamp(0.65rem, 2.8vw, 0.8rem);
-    table-layout: auto;   /* Cambiado a auto para que no fuerce anchos fijos */
-    overflow-x: auto;
-    display: block;
+    table-layout: fixed;  /* Para que las columnas se distribuyan uniformemente */
 }
 
 .resumen-mini-table th {
@@ -560,8 +559,8 @@ body.dark-theme .cell-yellow {
     text-transform: uppercase;
     letter-spacing: 0.5px;
     border-bottom: 1px solid var(--accent-color);
+    text-align: center;
     word-break: break-word;
-    overflow-wrap: break-word;
 }
 
 .resumen-mini-table td {
@@ -571,7 +570,6 @@ body.dark-theme .cell-yellow {
     color: var(--text-secondary);
     transition: background 0.15s;
     word-break: break-word;
-    overflow-wrap: break-word;
 }
 
 /* Primera fila de datos: aumentada 2 medidas */
@@ -584,7 +582,7 @@ body.dark-theme .cell-yellow {
 .currency-value, .percentage-value {
     font-family: 'Inter', monospace;
     font-weight: 500;
-    white-space: nowrap;
+    white-space: nowrap;  /* En escritorio, mantener en una línea */
 }
 
 .currency-value {
@@ -609,24 +607,23 @@ body.dark-theme .percentage-value {
     padding: 0.15rem 0.25rem !important;
 }
 
-/* Ajustes responsivos para móvil */
+/* Ajustes para móvil: todo visible y centrado */
 @media (max-width: 768px) {
     .resumen-grid {
-        gap: 0.6rem;
+        gap: 0.8rem;
         padding: 0.3rem;
-        grid-template-columns: 1fr !important;  /* Una sola columna en móvil */
+        grid-template-columns: 1fr !important;   /* Una columna en vertical */
     }
     .resumen-mini-table {
-        font-size: 0.7rem;
-        display: table;  /* Vuelve a comportamiento normal en móvil para que sea más compacta */
-        width: 100%;
+        table-layout: auto;   /* Permite que las columnas se ajusten al contenido */
+        font-size: 0.75rem;
     }
     .resumen-mini-table th,
     .resumen-mini-table td {
         padding: 0.3rem;
     }
     .currency-value, .percentage-value {
-        white-space: normal;  /* Permitir saltos de línea en valores largos */
+        white-space: normal;   /* Permite saltos de línea en móvil */
         word-break: break-word;
     }
     .resumen-row-first td {
@@ -668,30 +665,27 @@ body.dark-theme .percentage-value {
     }
 }
 
-/* Orientación horizontal en móvil: ajustes adicionales */
+/* Orientación horizontal en móvil: dos columnas y ajustes */
 @media (max-width: 900px) and (orientation: landscape) {
     .resumen-grid {
-        grid-template-columns: repeat(2, 1fr) !important;  /* Forzar 2 columnas en horizontal */
-        gap: 0.5rem;
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 0.6rem;
     }
     .resumen-mini-table {
-        font-size: 0.65rem;
+        font-size: 0.7rem;
     }
     .resumen-mini-header {
-        font-size: 0.8rem;
+        font-size: 0.85rem;
         padding: 0.4rem;
     }
     .resumen-mini-table td {
         padding: 0.25rem;
     }
     .resumen-row-first td {
-        font-size: 0.75rem !important;
+        font-size: 0.8rem !important;
     }
     .sidebar {
         width: 150px;
-    }
-    .main-content {
-        overflow-y: auto;
     }
     .sheet-content {
         overflow-y: visible;
