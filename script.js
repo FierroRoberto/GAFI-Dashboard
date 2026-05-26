@@ -1,6 +1,6 @@
 /**
  * script.js - Dashboard Ejecutivo GAFI Ferrelectrico
- * - Para hojas Mes, Cedis Mes, Trimestre, Cartera Vencida: se excluye la última fila de datos en los gráficos.
+ * - Hoja "resumen": grid de 2 columnas fijas (máximo 2 minicards por fila).
  * - Resto de funcionalidades igual.
  */
 
@@ -223,13 +223,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const gridContainer = document.createElement('div');
             gridContainer.className = 'resumen-grid';
             
-            const count = groupsToShow.length;
-            let cols = 4;
-            if (count <= 4) cols = 2;
-            else if (count <= 6) cols = 3;
-            else cols = 4;
-            gridContainer.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-            // Altura natural (sin gridTemplateRows)
+            // ========== CAMBIO: FIJAR 2 COLUMNAS (MÁXIMO 2 MINICARDS POR FILA) ==========
+            gridContainer.style.gridTemplateColumns = `repeat(2, 1fr)`;
+            // No se establece gridTemplateRows para que la altura sea natural.
             
             // Umbral para DN desde celda F4 (rawRows[3][5])
             let dnThreshold = null;
@@ -718,7 +714,8 @@ document.addEventListener('DOMContentLoaded', () => {
         return num;
     }
 
-    // ========== GRÁFICOS (con exclusión de la última fila para Mes, Cedis Mes, Trimestre, Cartera Vencida) ==========
+    // ========== GRÁFICOS ==========
+    // (Se mantienen idénticos a la versión anterior, sin cambios)
     function showFamiliesPieChart(sheetName, headers, rowsData, mode) {
         const isPeriodo = (mode === 0);
         const ventaColName = isPeriodo ? 'venta periodo act.' : 'venta trimestre act.';
@@ -931,12 +928,10 @@ document.addEventListener('DOMContentLoaded', () => {
         let datasetLabel = '';
         let barColors = [];
 
-        // ========== EXCLUSIÓN DE LA ÚLTIMA FILA PARA LAS HOJAS SOLICITADAS ==========
+        // Exclusión de la última fila para Mes, Cedis Mes, Trimestre, Cartera vencida
         let effectiveRowsData = rowsData;
         if (sheetLower === 'mes' || sheetLower === 'cedis mes' || sheetLower === 'trimestre' || sheetLower === 'cartera vencida') {
-            if (rowsData.length > 0) {
-                effectiveRowsData = rowsData.slice(0, -1); // Quitar la última fila
-            }
+            if (rowsData.length > 0) effectiveRowsData = rowsData.slice(0, -1);
         }
 
         if (sheetLower === 'mes') {
@@ -1111,7 +1106,7 @@ document.addEventListener('DOMContentLoaded', () => {
             datasetLabel = "Cubrimiento de cuota (%)";
         }
         else {
-            // Genérico para otras hojas (no aplica exclusión de última fila)
+            // Genérico
             let valueColIndex = -1;
             for (let i = 0; i < headers.length; i++) {
                 const lower = normalizeString(headers[i]);
