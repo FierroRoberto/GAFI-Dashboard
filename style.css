@@ -498,7 +498,7 @@ body.dark-theme .cell-yellow {
     color: var(--accent-color);
 }
 
-/* ========== ESTILOS PARA LA HOJA "RESUMEN" CON ALTURA NATURAL ========== */
+/* ========== ESTILOS ADAPTATIVOS PARA LA HOJA "RESUMEN" ========== */
 .resumen-grid {
     display: grid;
     gap: 1rem;
@@ -521,6 +521,7 @@ body.dark-theme .cell-yellow {
     height: auto;
     display: flex;
     flex-direction: column;
+    min-width: 0; /* Permite que el contenido se ajuste */
 }
 
 .resumen-mini-card:hover {
@@ -538,12 +539,14 @@ body.dark-theme .cell-yellow {
     border-bottom: 2px solid var(--accent-color);
     font-size: clamp(0.8rem, 4vw, 1.1rem);
     letter-spacing: -0.2px;
+    word-break: break-word;
 }
 
 .resumen-mini-table {
     width: 100%;
     border-collapse: collapse;
     font-size: clamp(0.7rem, 3vw, 0.85rem);
+    table-layout: fixed; /* Ayuda a que las columnas se distribuyan */
 }
 
 .resumen-mini-table th {
@@ -555,6 +558,8 @@ body.dark-theme .cell-yellow {
     text-transform: uppercase;
     letter-spacing: 0.5px;
     border-bottom: 1px solid var(--accent-color);
+    word-break: break-word;
+    overflow-wrap: break-word;
 }
 
 .resumen-mini-table td {
@@ -563,9 +568,11 @@ body.dark-theme .cell-yellow {
     border-bottom: 1px solid var(--border-color);
     color: var(--text-secondary);
     transition: background 0.15s;
+    word-break: break-word;
+    overflow-wrap: break-word;
 }
 
-/* Primera fila de datos: tamaño reducido en 2 medidas (desde 1.15rem a ~0.95rem en desktop) */
+/* Primera fila de datos: tamaño reducido en 2 medidas */
 .resumen-row-first td {
     font-size: clamp(0.7rem, 4vw, 0.95rem) !important;
     font-weight: 600;
@@ -575,6 +582,7 @@ body.dark-theme .cell-yellow {
 .currency-value, .percentage-value {
     font-family: 'Inter', monospace;
     font-weight: 500;
+    white-space: nowrap; /* Evita que los valores se rompan en varias líneas */
 }
 
 .currency-value {
@@ -599,7 +607,7 @@ body.dark-theme .percentage-value {
     padding: 0.2rem 0.3rem !important;
 }
 
-/* Responsive */
+/* Ajustes responsivos */
 @media (max-width: 1024px) {
     .resumen-grid {
         gap: 0.8rem;
@@ -650,6 +658,9 @@ body.dark-theme .percentage-value {
     }
     .radio-item label {
         font-size: 0.65rem;
+    }
+    .currency-value, .percentage-value {
+        white-space: normal; /* En móvil, permitir que los valores largos se rompan */
     }
 }
 
