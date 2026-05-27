@@ -1,7 +1,7 @@
 /**
  * script.js - Dashboard Ejecutivo GAFI Ferrelectrico
- * - Hoja "Venta Diaria": modo 0 (barras originales), modo 1 (dispersión con línea)
- * - Resto de funcionalidades igual.
+ * - Todas las hojas funcionando, incluida "resumen" (minicards)
+ * - Gráficos, formatos, temas, etc.
  */
 
 let currentSheetsData = [];
@@ -195,10 +195,233 @@ document.addEventListener('DOMContentLoaded', () => {
         const contentWrapper = document.createElement('div');
         contentWrapper.className = 'sheet-content';
         
+        // ========== HOJA "RESUMEN" (minicards) ==========
         if (normalizeString(sheetName) === 'resumen' && rawRows && rawRows.length >= 2) {
-            // ... (código de resumen, igual que antes, omitido por brevedad pero presente)
-            // En la versión final se incluye completo.
+            const mainHeaders = rawRows[0] || [];
+            const subHeaders = rawRows[1] || [];
+            const groups = [];
+            let i = 0;
+            while (i < mainHeaders.length) {
+                const main = mainHeaders[i];
+                if (main && main.toString().trim() !== "") {
+                    if (i + 1 < subHeaders.length) {
+                        const sub1 = subHeaders[i] || "";
+                        const sub2 = subHeaders[i+1] || "";
+                        const dataRows = rawRows.slice(2);
+                        const values1 = dataRows.map(row => row[i] ?? "");
+                        const values2 = dataRows.map(row => row[i+1] ?? "");
+                        groups.push({
+                            title: main.toString(),
+                            subTitle1: sub1.toString(),
+                            subTitle2: sub2.toString(),
+                            data1: values1,
+                            data2: values2,
+                            colIndex: i
+                        });
+                    }
+                    i += 2;
+                } else {
+                    i++;
+                }
+            }
+            const maxGroups = 8;
+            const groupsToShow = groups.slice(0, maxGroups);
+            const gridContainer = document.createElement('div');
+            gridContainer.className = 'resumen-grid';
+            
+            // Fijar 2 columnas
+            gridContainer.style.gridTemplateColumns = `repeat(2, 1fr)`;
+            
+            // Umbral para DN desde celda F4 (rawRows[3][5])
+            let dnThreshold = null;
+            if (rawRows.length > 3 && rawRows[3] && rawRows[3][5] !== undefined && rawRows[3][5] !== "") {
+                const thresholdRaw = rawRows[3][5];
+                dnThreshold = parseFloat(String(thresholdRaw).replace(/[^0-9.-]/g, ''));
+                if (isNaN(dnThreshold)) dnThreshold = null;
+            }
+            
+            groupsToShow.forEach(group => {
+                const normalizedTitle = normalizeString(group.title);
+                const isDN = normalizedTitle === 'dn';
+                const singleRowGroups = ['mes', 'cedis mes', 'trimestre', 'cartera vencida', 'familias'];
+                const showOnlyFirstRow = singleRowGroups.includes(normalizedTitle);
+                const isSpecialGroup = (normalizedTitle === 'dn' || normalizedTitle === 'familias');
+                
+                const miniCard = document.createElement('div');
+                miniCard.className = 'resumen-mini-card';
+                
+                const table = document.createElement('table');
+                table.className = 'resumen-mini-table';
+                const thead = document.createElement('thead');
+                const headerRow = document.createElement('tr');
+                const th1 = document.createElement('th');
+                th1.textContent = group.subTitle1;
+                const th2 = document.createElement('th');
+                th2.textContent = group.subTitle2;
+                headerRow.appendChild(th1);
+                headerRow.appendChild(th2);
+                thead.appendChild(headerRow);
+                table.appendChild(thead);
+                
+                const tbody = document.createElement('tbody');
+                
+                // Funciones auxiliares
+                const parsePercentageNum = (value) => {
+                    if (value === null || value === undefined || value === "") return NaN;
+                    let num = 0;
+                    if (typeof value === 'number') {
+                        if (value <= 1 && value >= -1) num = value * 100;
+                        else num = value;
+                    } else {
+                        const str = String(value).trim().replace('%', '');
+                        let parsed = parseFloat(str);
+                        if (isNaN(parsed)) return NaN;
+                        if (parsed <= 1 && parsed >= -1 && !String(value).includes('%')) parsed = parsed * 100;
+                        num = parsed;
+                    }
+                    return num;
+                };
+                
+                const getColorClassForNormalGroup = (value, groupTitle) => {
+                    const titleNorm = normalizeString(groupTitle);
+                    const num = parsePercentageNum(value);
+                    if (isNaN(num)) return '';
+                    if (titleNorm === 'mes' || titleNorm === 'cedis mes' || titleNorm === 'trimestre') {
+                        if (num > 99.9) return 'cell-green';
+                        if (num < 90) return 'cell-red';
+                        return 'cell-yellow';
+                    } else if (titleNorm === 'cartera vencida') {
+                        if (num > 3.5) return 'cell-yellow';
+                        return 'cell-green';
+                    }
+                    return '';
+                };
+                
+                const formatNormalCell = (value, isRightColumn, groupTitle) => {
+                    if (value === null || value === undefined || value === "") return { display: "—", color: '' };
+                    let display = "—";
+                    let color = '';
+                    if (!isRightColumn) {
+                        const num = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
+                        if (!isNaN(num)) {
+                            display = formatCurrencyForResumen(value, true);
+                        } else {
+                            display = value.toString();
+                        }
+                    } else {
+                        const num = parsePercentageNum(value);
+                        if (!isNaN(num)) {
+                            const rounded = (Math.round(num * 10) / 10).toFixed(1);
+                            display = rounded + "%";
+                            color = getColorClassForNormalGroup(value, groupTitle);
+                        } else {
+                            display = value.toString();
+                        }
+                    }
+                    return { display, color };
+                };
+                
+                const formatFamiliesCell = (value) => {
+                    if (value === null || value === undefined || value === "") return { display: "—", color: '' };
+                    const num = parsePercentageNum(value);
+                    if (!isNaN(num)) {
+                        const rounded = Math.round(num);
+                        const color = (num > 0) ? 'cell-green' : 'cell-red';
+                        return { display: rounded + "%", color };
+                    }
+                    return { display: value.toString(), color: '' };
+                };
+                
+                const formatDNCell = (value, rowIndex) => {
+                    if (value === null || value === undefined || value === "") return { display: "—", color: '' };
+                    const num = parsePercentageNum(value);
+                    let display = "—";
+                    let color = '';
+                    if (!isNaN(num)) {
+                        const rounded = Math.round(num);
+                        display = rounded + "%";
+                        if (rowIndex === 0 && dnThreshold !== null && !isNaN(dnThreshold)) {
+                            color = (num > dnThreshold) ? 'cell-green' : 'cell-red';
+                        }
+                    } else {
+                        display = value.toString();
+                    }
+                    return { display, color };
+                };
+                
+                // Fila 2 (índice 0) - primera fila de datos
+                if (group.data1.length > 0 && group.data2.length > 0) {
+                    const row2 = document.createElement('tr');
+                    const leftValue = group.data1[0];
+                    const rightValue = group.data2[0];
+                    const isLeftNumeric = isNumericValue(leftValue);
+                    const isRightNumeric = isNumericValue(rightValue);
+                    if (isLeftNumeric || isRightNumeric) {
+                        row2.className = 'resumen-row-first';
+                    }
+                    let left, right;
+                    if (isDN) {
+                        left = formatDNCell(leftValue, 0);
+                        right = formatDNCell(rightValue, 0);
+                    } else if (normalizedTitle === 'familias') {
+                        left = formatFamiliesCell(leftValue);
+                        right = formatFamiliesCell(rightValue);
+                    } else {
+                        left = formatNormalCell(leftValue, false, group.title);
+                        right = formatNormalCell(rightValue, true, group.title);
+                    }
+                    const td1 = document.createElement('td');
+                    td1.textContent = left.display;
+                    if (left.color) td1.className = left.color;
+                    const td2 = document.createElement('td');
+                    td2.textContent = right.display;
+                    if (right.color) td2.className = right.color;
+                    row2.appendChild(td1);
+                    row2.appendChild(td2);
+                    tbody.appendChild(row2);
+                }
+                
+                // Fila 3 (índice 1) - solo si no es de fila única
+                if (!showOnlyFirstRow && group.data1.length > 1 && group.data2.length > 1) {
+                    const row3 = document.createElement('tr');
+                    let left, right;
+                    if (isDN) {
+                        left = formatDNCell(group.data1[1], 1);
+                        right = formatDNCell(group.data2[1], 1);
+                    } else if (normalizedTitle === 'familias') {
+                        left = formatFamiliesCell(group.data1[1]);
+                        right = formatFamiliesCell(group.data2[1]);
+                    } else {
+                        left = formatNormalCell(group.data1[1], false, group.title);
+                        right = formatNormalCell(group.data2[1], true, group.title);
+                    }
+                    const td1 = document.createElement('td');
+                    td1.textContent = left.display;
+                    if (left.color) td1.className = left.color;
+                    const td2 = document.createElement('td');
+                    td2.textContent = right.display;
+                    if (right.color) td2.className = right.color;
+                    if (isDN) {
+                        td1.style.fontSize = '0.65rem';
+                        td2.style.fontSize = '0.65rem';
+                    }
+                    row3.appendChild(td1);
+                    row3.appendChild(td2);
+                    tbody.appendChild(row3);
+                }
+                // Se eliminó la cuarta fila para DN
+                
+                table.appendChild(tbody);
+                const miniHeader = document.createElement('div');
+                miniHeader.className = 'resumen-mini-header';
+                miniHeader.textContent = group.title;
+                miniCard.appendChild(miniHeader);
+                miniCard.appendChild(table);
+                gridContainer.appendChild(miniCard);
+            });
+            contentWrapper.appendChild(gridContainer);
         } else {
+            // Tablas normales
             const tableWrapper = document.createElement('div');
             tableWrapper.className = 'table-wrapper';
             const table = buildDataTable(sheetName, headers, rowsData, worksheet);
@@ -217,7 +440,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return card;
     }
     
-    // Funciones auxiliares para resumen (mantener igual)
+    // Funciones auxiliares para resumen
     function formatCurrencyForResumen(value, integerMode = true) {
         if (value === null || value === undefined || value === "") return "—";
         let num = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
@@ -245,7 +468,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return rounded.toFixed(decimals) + "%";
     }
 
-    // ========== CONSTRUCCIÓN DE TABLA ESTÁNDAR (igual que antes) ==========
+    // ========== CONSTRUCCIÓN DE TABLA ESTÁNDAR ==========
     function buildDataTable(sheetName, headers, rowsData, worksheet) {
         const table = document.createElement('table');
         table.className = 'data-table';
@@ -289,7 +512,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 const lowerHeader = normalizeString(header);
                 const sheetLowerLocal = normalizeString(sheetName);
 
-                // Reglas especiales (familias, cedis cartera vencida, etc.)
                 if (sheetLowerLocal === 'familias') {
                     if (idx >= 1 && idx <= 4) {
                         displayValue = formatCurrency(rawValue, true);
@@ -388,7 +610,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return table;
     }
 
-    // ========== FUNCIONES AUXILIARES ==========
     function normalizeString(str) {
         return str.toLowerCase()
             .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -714,7 +935,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (sheetLower === 'mes') {
-            // (código de mes, igual que antes)
             let valueColIndex = -1;
             for (let i = 0; i < headers.length; i++) {
                 const lower = normalizeString(headers[i]);
@@ -754,7 +974,6 @@ document.addEventListener('DOMContentLoaded', () => {
             datasetLabel = "Cubrimiento de cuota (%)";
         }
         else if (sheetLower === 'cartera vencida') {
-            // (código de cartera vencida, igual)
             let valueColIndex = -1;
             for (let i = 0; i < headers.length; i++) {
                 if (normalizeString(headers[i]).includes('suma de % 15 dias')) {
@@ -792,7 +1011,6 @@ document.addEventListener('DOMContentLoaded', () => {
             datasetLabel = "Suma de % 15 dias (%)";
         }
         else if (sheetLower === 'semaforizacion gerente') {
-            // (código semaforizacion gerente)
             let gerenteIdx = -1, promedioIdx = -1;
             for (let i = 0; i < headers.length; i++) {
                 const h = normalizeString(headers[i]);
@@ -829,7 +1047,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const currentMode = ventaDiariaMode[sheetName];
             
             if (currentMode === 0) {
-                // Modo original: barras A-F, orden invertido
                 const columns = ['A', 'B', 'C', 'D', 'E', 'F'];
                 for (let row = 2; row <= 18; row += 2) {
                     for (let col of columns) {
@@ -894,8 +1111,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 chartContainer.style.display = 'block';
                 return;
             } else {
-                // Modo 1: gráfico de dispersión con línea y marcadores (venta por semana)
-                // Obtener valores de columna G (semana 1,2,3,...)
                 const dataPoints = [];
                 let maxRow = 1;
                 for (let row = 1; row <= 100; row++) {
@@ -944,7 +1159,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             pointBorderWidth: 1,
                             showLine: true,
                             fill: false,
-                            tension: 0, // líneas rectas
+                            tension: 0,
                         }]
                     },
                     options: {
@@ -983,7 +1198,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         else if (sheetLower === 'cedis mes' || sheetLower === 'trimestre') {
-            // (código igual)
             let valueColIndex = -1;
             for (let i = 0; i < headers.length; i++) {
                 const lower = normalizeString(headers[i]);
@@ -1023,7 +1237,6 @@ document.addEventListener('DOMContentLoaded', () => {
             datasetLabel = "Cubrimiento de cuota (%)";
         }
         else {
-            // Genérico
             let valueColIndex = -1;
             for (let i = 0; i < headers.length; i++) {
                 const lower = normalizeString(headers[i]);

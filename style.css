@@ -20,7 +20,6 @@
     --sidebar-width: 166px;
 }
 
-/* Tema claro */
 body.light-theme {
     --bg-body: #f0f4f8;
     --bg-header: #ffffff;
@@ -288,14 +287,13 @@ html, body {
     width: 100%;
 }
 
-/* VIEWPORT DE TABLA - asegurar que tenga scroll vertical */
+/* VIEWPORT DE TABLA */
 .sheets-viewport {
     flex: 1;
     background: var(--bg-body);
     border-radius: 20px;
-    overflow-y: auto;    /* Scroll vertical */
-    overflow-x: auto;    /* Scroll horizontal si es necesario */
-    min-height: 0;       /* Para que flex funcione correctamente */
+    overflow-y: auto;
+    overflow-x: auto;
 }
 
 .sheet-card {
@@ -308,7 +306,8 @@ html, body {
     flex-direction: column;
     cursor: pointer;
     transition: transform 0.2s, box-shadow 0.2s;
-    height: auto;        /* Altura automática */
+    height: auto;
+    margin-bottom: 1rem;
 }
 
 .sheet-card:hover {
@@ -355,7 +354,7 @@ html, body {
 
 .sheet-content {
     flex: 1;
-    overflow: visible;  /* No bloquear scroll */
+    overflow: visible;
 }
 
 .table-wrapper {
@@ -498,7 +497,7 @@ body.dark-theme .cell-yellow {
     color: var(--accent-color);
 }
 
-/* ========== ESTILOS RESPONSIVOS Y ADAPTATIVOS PARA "RESUMEN" ========== */
+/* ========== ESTILOS PARA LA HOJA "RESUMEN" (MINICARDS) ========== */
 .resumen-grid {
     display: grid;
     gap: 1rem;
@@ -572,7 +571,7 @@ body.dark-theme .cell-yellow {
     overflow-wrap: break-word;
 }
 
-/* Primera fila de datos: tamaño aumentado */
+/* Primera fila de datos (más grande) */
 .resumen-row-first td {
     font-size: clamp(0.75rem, 4.5vw, 1rem) !important;
     font-weight: 600;
@@ -607,7 +606,7 @@ body.dark-theme .percentage-value {
     padding: 0.15rem 0.25rem !important;
 }
 
-/* Ajustes responsivos: hasta 768px, una sola columna */
+/* Responsive: en móvil, una sola columna */
 @media (max-width: 768px) {
     .resumen-grid {
         grid-template-columns: 1fr !important;
@@ -623,7 +622,7 @@ body.dark-theme .percentage-value {
         font-size: clamp(0.75rem, 5vw, 1rem);
     }
     .currency-value, .percentage-value {
-        white-space: normal; /* Permitir salto de línea en móvil */
+        white-space: normal;
     }
     .resumen-row-first td {
         font-size: clamp(0.7rem, 4vw, 0.9rem) !important;
