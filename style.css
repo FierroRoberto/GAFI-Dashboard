@@ -288,13 +288,14 @@ html, body {
     width: 100%;
 }
 
-/* VIEWPORT DE TABLA */
+/* VIEWPORT DE TABLA - asegurar que tenga scroll vertical */
 .sheets-viewport {
     flex: 1;
     background: var(--bg-body);
     border-radius: 20px;
-    overflow-y: auto;
-    overflow-x: hidden;
+    overflow-y: auto;    /* Scroll vertical */
+    overflow-x: auto;    /* Scroll horizontal si es necesario */
+    min-height: 0;       /* Para que flex funcione correctamente */
 }
 
 .sheet-card {
@@ -307,7 +308,7 @@ html, body {
     flex-direction: column;
     cursor: pointer;
     transition: transform 0.2s, box-shadow 0.2s;
-    height: auto; /* Altura automática para permitir scroll */
+    height: auto;        /* Altura automática */
 }
 
 .sheet-card:hover {
@@ -354,7 +355,7 @@ html, body {
 
 .sheet-content {
     flex: 1;
-    overflow: visible; /* Cambiado de hidden a visible para permitir scroll */
+    overflow: visible;  /* No bloquear scroll */
 }
 
 .table-wrapper {
@@ -504,7 +505,7 @@ body.dark-theme .cell-yellow {
     padding: 0.5rem;
     width: 100%;
     height: auto;
-    overflow: visible; /* Scroll manejado por el padre */
+    overflow: visible;
 }
 
 .resumen-mini-card {
