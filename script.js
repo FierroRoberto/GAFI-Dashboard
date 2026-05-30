@@ -1,7 +1,6 @@
 /**
  * script.js - Dashboard Ejecutivo GAFI Ferrelectrico
- * - Todas las hojas funcionando, incluida "resumen" (minicards)
- * - Gráficos, formatos, temas, etc.
+ * - Hoja "DN": color condicional en columnas "Venta Faltante" y "No. Ctes que faltan p/cuota"
  */
 
 let currentSheetsData = [];
@@ -229,10 +228,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const gridContainer = document.createElement('div');
             gridContainer.className = 'resumen-grid';
             
-            // Fijar 2 columnas
             gridContainer.style.gridTemplateColumns = `repeat(2, 1fr)`;
             
-            // Umbral para DN desde celda F4 (rawRows[3][5])
             let dnThreshold = null;
             if (rawRows.length > 3 && rawRows[3] && rawRows[3][5] !== undefined && rawRows[3][5] !== "") {
                 const thresholdRaw = rawRows[3][5];
@@ -265,19 +262,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 const tbody = document.createElement('tbody');
                 
-                // Funciones auxiliares
                 const parsePercentageNum = (value) => {
                     if (value === null || value === undefined || value === "") return NaN;
                     let num = 0;
                     if (typeof value === 'number') {
-                        if (value <= 1 && value >= -1) num = value * 100;
-                        else num = value;
+                        if (Math.abs(value) >= 1) num = value;
+                        else num = value * 100;
                     } else {
                         const str = String(value).trim().replace('%', '');
                         let parsed = parseFloat(str);
                         if (isNaN(parsed)) return NaN;
-                        if (parsed <= 1 && parsed >= -1 && !String(value).includes('%')) parsed = parsed * 100;
-                        num = parsed;
+                        if (Math.abs(parsed) >= 1) num = parsed;
+                        else num = parsed * 100;
                     }
                     return num;
                 };
@@ -349,7 +345,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     return { display, color };
                 };
                 
-                // Fila 2 (índice 0) - primera fila de datos
                 if (group.data1.length > 0 && group.data2.length > 0) {
                     const row2 = document.createElement('tr');
                     const leftValue = group.data1[0];
@@ -381,7 +376,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     tbody.appendChild(row2);
                 }
                 
-                // Fila 3 (índice 1) - solo si no es de fila única
                 if (!showOnlyFirstRow && group.data1.length > 1 && group.data2.length > 1) {
                     const row3 = document.createElement('tr');
                     let left, right;
@@ -409,7 +403,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     row3.appendChild(td2);
                     tbody.appendChild(row3);
                 }
-                // Se eliminó la cuarta fila para DN
                 
                 table.appendChild(tbody);
                 const miniHeader = document.createElement('div');
@@ -421,7 +414,6 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             contentWrapper.appendChild(gridContainer);
         } else {
-            // Tablas normales
             const tableWrapper = document.createElement('div');
             tableWrapper.className = 'table-wrapper';
             const table = buildDataTable(sheetName, headers, rowsData, worksheet);
@@ -440,7 +432,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return card;
     }
     
-    // Funciones auxiliares para resumen
     function formatCurrencyForResumen(value, integerMode = true) {
         if (value === null || value === undefined || value === "") return "—";
         let num = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
@@ -455,20 +446,19 @@ document.addEventListener('DOMContentLoaded', () => {
         if (value === null || value === undefined || value === "") return "—";
         let num = 0;
         if (typeof value === 'number') {
-            if (value <= 1 && value >= -1) num = value * 100;
-            else num = value;
+            if (Math.abs(value) >= 1) num = value;
+            else num = value * 100;
         } else {
             const str = String(value).trim().replace('%', '');
             let parsed = parseFloat(str);
             if (isNaN(parsed)) return value.toString();
-            if (parsed <= 1 && parsed >= -1 && !String(value).includes('%')) parsed = parsed * 100;
-            num = parsed;
+            if (Math.abs(parsed) >= 1) num = parsed;
+            else num = parsed * 100;
         }
         const rounded = (decimals === 0) ? Math.round(num) : (Math.round(num * Math.pow(10, decimals)) / Math.pow(10, decimals));
         return rounded.toFixed(decimals) + "%";
     }
 
-    // ========== CONSTRUCCIÓN DE TABLA ESTÁNDAR ==========
     function buildDataTable(sheetName, headers, rowsData, worksheet) {
         const table = document.createElement('table');
         table.className = 'data-table';
@@ -588,6 +578,18 @@ document.addEventListener('DOMContentLoaded', () => {
                             }
                         }
 
+                        // === NUEVO: Color condicional para "Venta Faltante" y "No. Ctes que faltan p/cuota" en hoja DN ===
+                        if (sheetLowerLocal === 'dn') {
+                            const colLower = lowerHeader;
+                            if (colLower.includes('venta faltante') || colLower.includes('no. ctes que faltan p/cuota')) {
+                                const numVal = parseFloat(String(rawValue).replace(/[^0-9.-]/g, ''));
+                                if (!isNaN(numVal)) {
+                                    if (numVal > 0) cellClass += ' cell-green';
+                                    else cellClass += ' cell-red';
+                                }
+                            }
+                        }
+
                         if (lowerHeader.includes('cubrimiento') && lowerHeader.includes('cuota') && sheetLowerLocal !== 'dn' && !isSemaforizacion && sheetLowerLocal !== 'semaforizacion gerente' && sheetLowerLocal !== 'familias' && sheetLowerLocal !== 'cedis cartera vencida' && sheetLowerLocal !== 'resumen') {
                             const percentValue = parseToPercentage(rawValue, 1);
                             const numericPercent = percentValue.numeric;
@@ -686,14 +688,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (value === null || value === undefined || value === "") return { formatted: "—", numeric: 0 };
         let num = 0;
         if (typeof value === 'number') {
-            if (value <= 1 && value >= -1) num = value * 100;
-            else num = value;
+            if (Math.abs(value) >= 1) num = value;
+            else num = value * 100;
         } else {
             const str = String(value).trim().replace('%', '');
             let parsed = parseFloat(str);
             if (isNaN(parsed)) return { formatted: String(value), numeric: 0 };
-            if (parsed <= 1 && parsed >= -1 && !String(value).includes('%')) parsed = parsed * 100;
-            num = parsed;
+            if (Math.abs(parsed) >= 1) num = parsed;
+            else num = parsed * 100;
         }
         const rounded = (decimals === 0) ? Math.round(num) : (Math.round(num * Math.pow(10, decimals)) / Math.pow(10, decimals));
         const formatted = (decimals === 0) ? rounded.toFixed(0) + "%" : rounded.toFixed(decimals) + "%";
@@ -704,14 +706,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (value === null || value === undefined || value === "") return NaN;
         let num = 0;
         if (typeof value === 'number') {
-            if (value <= 1 && value >= -1) num = value * 100;
-            else num = value;
+            if (Math.abs(value) >= 1) num = value;
+            else num = value * 100;
         } else {
             const str = String(value).trim().replace('%', '');
             let parsed = parseFloat(str);
             if (isNaN(parsed)) return NaN;
-            if (parsed <= 1 && parsed >= -1 && !String(value).includes('%')) parsed = parsed * 100;
-            num = parsed;
+            if (Math.abs(parsed) >= 1) num = parsed;
+            else num = parsed * 100;
         }
         return num;
     }
@@ -815,7 +817,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             const chartContainer = document.getElementById('chartContainer');
             const chartTitle = document.getElementById('chartTitle');
-            const modeDisplay = (currentMode === 0) ? "Periodo vs Periodo" : "Trimestre vs Trimestre";
+            const modeDisplay = (currentMode === 0) ? "Con Caída Periodo vs Periodo" : "Con Caída Trimestre vs Trimestre";
             chartTitle.textContent = `Gráfico: ${sheetName} (${modeDisplay})`;
             
             familiasMode[sheetName] = (currentMode + 1) % 2;
@@ -919,7 +921,6 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         
-        // Resto de hojas (incluye Venta Diaria)
         const chartContainer = document.getElementById('chartContainer');
         const chartTitle = document.getElementById('chartTitle');
         chartTitle.textContent = `Gráfico: ${sheetName}`;
