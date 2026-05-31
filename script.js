@@ -1,185 +1,302 @@
 /**
- * script.js - Dashboard Ejecutivo GAFI Ferrelectrico
- * - Hoja "DN": color condicional en columnas "Venta Faltante" y "No. Ctes que faltan p/cuota"
+ * script.js — Dashboard Ejecutivo GAFI Ferrelectrico v2.0
+ * Gráficas animadas: barras elásticas, dispersión con draw-SVG, dona con contador.
  */
 
-let currentSheetsData = [];
-let selectedSheetName = null;
-let currentChart = null;
-let familiasMode = {};
-let ventaDiariaMode = {};
+'use strict';
 
+let currentSheetsData  = [];
+let selectedSheetName  = null;
+let currentChart       = null;
+let familiasMode       = {};
+let ventaDiariaMode    = {};
+
+/* ══════════════════════════════════════════════════════
+   UTILIDADES
+══════════════════════════════════════════════════════ */
+const normalizeString = str =>
+    str.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().replace(/\s+/g, ' ');
+
+const escapeHtml = str => {
+    if (!str) return '';
+    return str.replace(/[&<>]/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;' }[m]));
+};
+
+const escapeId = str => str.replace(/[^a-z0-9]/gi, '_');
+
+const isNumericValue = value => {
+    if (value === null || value === undefined || value === "") return false;
+    return !isNaN(parseFloat(String(value).replace(/[^0-9.-]/g, '')));
+};
+
+function showToast(msg, type = 'info') {
+    const container = document.getElementById('toastContainer');
+    if (!container) return;
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.style.borderLeftColor = type === 'error' ? '#ef4444' : type === 'success' ? '#22c55e' : 'var(--accent-color)';
+    toast.innerHTML = `<i class="fas fa-${type === 'error' ? 'exclamation-circle' : type === 'success' ? 'check-circle' : 'info-circle'}" style="margin-right:6px;"></i>${escapeHtml(msg)}`;
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 3200);
+}
+
+/* ══════════════════════════════════════════════════════
+   CHART.JS — PLUGINS GLOBALES DE ANIMACIÓN
+══════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════
+   CHART.JS — PLUGINS GLOBALES COMPATIBLES CON v4
+   En Chart.js 4, los plugins inline en el array plugins:[]
+   del config NO se ejecutan. Se deben registrar con Chart.register().
+══════════════════════════════════════════════════════ */
+
+/* Estado compartido para el contador central de la dona */
+const _donutState = { progress: 0, total: 0, text: '#e8edf4' };
+
+/* Plugin global: dibuja el contador animado en el centro de la dona */
+const centerCounterPlugin = {
+    id: 'centerCounterPlugin',
+    afterDraw(chart) {
+        if (chart.config.type !== 'doughnut') return;
+        const { ctx, chartArea } = chart;
+        if (!chartArea) return;
+
+        const progress = _donutState.progress;
+        const current  = Math.round(_donutState.total * progress);
+        const cx = (chartArea.left + chartArea.right)  / 2;
+        const cy = (chartArea.top  + chartArea.bottom) / 2;
+
+        ctx.save();
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font         = `500 9px 'Space Mono', monospace`;
+        ctx.fillStyle    = _donutState.text;
+        ctx.globalAlpha  = 0.55;
+        ctx.fillText('TOTAL', cx, cy - 13);
+        ctx.globalAlpha  = 1;
+        ctx.font         = `bold 18px 'DM Sans', sans-serif`;
+        ctx.fillStyle    = _donutState.text;
+        ctx.fillText(current.toLocaleString('es-MX'), cx, cy + 4);
+        ctx.restore();
+    }
+};
+
+/* Plugin global: dibuja la línea del scatter progresivamente */
+const _scatterState = { progress: 1, accentColor: '#d32f2f', bgColor: '#0f1520' };
+
+const drawSVGGlobalPlugin = {
+    id: 'drawSVGGlobalPlugin',
+    afterDatasetsDraw(chart) {
+        if (chart.config.type !== 'scatter') return;
+        const progress = _scatterState.progress;
+        if (progress >= 1) return;
+
+        const meta = chart.getDatasetMeta(0);
+        if (!meta?.data?.length) return;
+
+        const { ctx, chartArea } = chart;
+        const points = meta.data;
+        const total  = points.length;
+        if (total < 2) return;
+
+        const upTo = Math.floor(progress * (total - 1));
+        const frac = (progress * (total - 1)) - upTo;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(chartArea.left, chartArea.top, chartArea.width, chartArea.height);
+        ctx.clip();
+
+        ctx.beginPath();
+        ctx.strokeStyle = _scatterState.accentColor;
+        ctx.lineWidth   = 2.5;
+        ctx.lineJoin    = 'round';
+        ctx.lineCap     = 'round';
+
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i <= upTo && i < total; i++) {
+            ctx.lineTo(points[i].x, points[i].y);
+        }
+        if (upTo < total - 1 && points[upTo + 1]) {
+            ctx.lineTo(
+                points[upTo].x + (points[upTo + 1].x - points[upTo].x) * frac,
+                points[upTo].y + (points[upTo + 1].y - points[upTo].y) * frac
+            );
+        }
+        ctx.stroke();
+
+        /* Tapar los puntos que aún no deben verse */
+        for (let i = upTo + 1; i < total; i++) {
+            ctx.beginPath();
+            ctx.arc(points[i].x, points[i].y, 8, 0, Math.PI * 2);
+            ctx.fillStyle = _scatterState.bgColor;
+            ctx.fill();
+        }
+        ctx.restore();
+    }
+};
+
+Chart.register(centerCounterPlugin, drawSVGGlobalPlugin);
+
+/* NO se toca Chart.defaults.animation — cada gráfica define la suya propia */
+
+/* ══════════════════════════════════════════════════════
+   INIT
+══════════════════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', () => {
-    const fileInput = document.getElementById('excelInput');
-    const exportAllBtn = document.getElementById('exportAllBtn');
+    const fileInput      = document.getElementById('excelInput');
+    const exportAllBtn   = document.getElementById('exportAllBtn');
     const themeToggleBtn = document.getElementById('themeToggleBtn');
-    const closeChartBtn = document.getElementById('closeChartBtn');
+    const closeChartBtn  = document.getElementById('closeChartBtn');
     const chartContainer = document.getElementById('chartContainer');
 
+    /* ── TEMA ── */
     function setTheme(theme) {
         document.body.classList.remove('dark-theme', 'light-theme');
         document.body.classList.add(theme);
         localStorage.setItem('gafi-theme', theme);
         const icon = themeToggleBtn.querySelector('i');
-        const span = themeToggleBtn.querySelector('span');
+        const span = themeToggleBtn.querySelector('span.hide-mobile') ||
+                     themeToggleBtn.querySelector('span');
         if (theme === 'dark-theme') {
             icon.className = 'fas fa-moon';
-            span.textContent = 'Modo Claro';
+            if (span) span.textContent = 'Modo Claro';
         } else {
             icon.className = 'fas fa-sun';
-            span.textContent = 'Modo Oscuro';
+            if (span) span.textContent = 'Modo Oscuro';
         }
         if (currentChart && chartContainer.style.display !== 'none') {
-            const activeSheetName = document.getElementById('chartTitle').textContent.replace('Gráfico: ', '');
-            const sheet = currentSheetsData.find(s => s.sheetName === activeSheetName);
-            if (sheet) {
-                showChartForSheet(sheet.sheetName, sheet.headers, sheet.rowsData, sheet.worksheet);
-            }
+            const titleEl = document.getElementById('chartTitle');
+            if (!titleEl) return;
+            let sn = titleEl.textContent.replace('Gráfico: ', '');
+            if (sn.includes(' (')) sn = sn.split(' (')[0];
+            const sheet = currentSheetsData.find(s => s.sheetName === sn);
+            if (sheet) showChartForSheet(sheet.sheetName, sheet.headers, sheet.rowsData, sheet.worksheet);
         }
     }
-    function toggleTheme() {
-        const isDark = document.body.classList.contains('dark-theme');
-        if (isDark) setTheme('light-theme');
-        else setTheme('dark-theme');
-    }
-    const savedTheme = localStorage.getItem('gafi-theme');
-    if (savedTheme && (savedTheme === 'dark-theme' || savedTheme === 'light-theme')) {
-        setTheme(savedTheme);
-    } else {
-        setTheme('dark-theme');
-    }
-    themeToggleBtn.addEventListener('click', toggleTheme);
 
+    const savedTheme = localStorage.getItem('gafi-theme');
+    setTheme((savedTheme === 'dark-theme' || savedTheme === 'light-theme') ? savedTheme : 'dark-theme');
+    themeToggleBtn.addEventListener('click', () => {
+        setTheme(document.body.classList.contains('dark-theme') ? 'light-theme' : 'dark-theme');
+    });
+
+    /* ── CERRAR CHART ── */
     closeChartBtn.addEventListener('click', () => {
         chartContainer.style.display = 'none';
-        if (currentChart) {
-            currentChart.destroy();
-            currentChart = null;
-        }
+        if (currentChart) { currentChart.destroy(); currentChart = null; }
     });
 
-    chartContainer.addEventListener('click', (e) => {
-        if (e.target.closest('.btn-close-chart')) return;
-        if (chartContainer.style.display !== 'block') return;
-        const chartTitleElem = document.getElementById('chartTitle');
-        if (!chartTitleElem) return;
-        let sheetName = chartTitleElem.textContent.replace('Gráfico: ', '');
-        if (sheetName.includes(' (')) sheetName = sheetName.split(' (')[0];
-        const sheet = currentSheetsData.find(s => s.sheetName === sheetName);
+    /* ── CLICK EN CHART PARA ROTAR ── */
+    chartContainer.addEventListener('click', e => {
+        if (e.target.closest('.btn-close-chart') || chartContainer.style.display !== 'block') return;
+        const titleEl = document.getElementById('chartTitle');
+        if (!titleEl) return;
+        let sn = titleEl.textContent.replace('Gráfico: ', '');
+        if (sn.includes(' (')) sn = sn.split(' (')[0];
+        const sheet = currentSheetsData.find(s => s.sheetName === sn);
         if (!sheet) return;
-        const sheetLower = normalizeString(sheetName);
-        if (sheetLower === 'familias') {
+        const sl = normalizeString(sn);
+        if (sl === 'familias') {
             showChartForSheet(sheet.sheetName, sheet.headers, sheet.rowsData, sheet.worksheet);
-        } else if (sheetLower === 'venta diaria') {
-            if (ventaDiariaMode[sheetName] === undefined) ventaDiariaMode[sheetName] = 0;
-            ventaDiariaMode[sheetName] = (ventaDiariaMode[sheetName] + 1) % 2;
+        } else if (sl === 'venta diaria') {
+            if (ventaDiariaMode[sn] === undefined) ventaDiariaMode[sn] = 0;
+            ventaDiariaMode[sn] = (ventaDiariaMode[sn] + 1) % 2;
             showChartForSheet(sheet.sheetName, sheet.headers, sheet.rowsData, sheet.worksheet);
         }
     });
 
+    /* ── ARCHIVO EXCEL ── */
     fileInput.addEventListener('change', handleFileSelect);
-    exportAllBtn.addEventListener('click', () => exportAllSheetsToExcel());
+    exportAllBtn.addEventListener('click', exportAllSheetsToExcel);
 
     function handleFileSelect(event) {
         const file = event.target.files[0];
         if (!file) return;
         const reader = new FileReader();
-        reader.onload = function(e) {
+        reader.onload = e => {
             const data = new Uint8Array(e.target.result);
             const workbook = XLSX.read(data, { type: 'array' });
             const sheetsData = [];
 
             workbook.SheetNames.forEach(sheetName => {
                 const worksheet = workbook.Sheets[sheetName];
-                const jsonRows = XLSX.utils.sheet_to_json(worksheet, { defval: "", header: 1 });
+                const jsonRows  = XLSX.utils.sheet_to_json(worksheet, { defval: "", header: 1 });
                 if (jsonRows.length === 0) {
                     sheetsData.push({ sheetName, rowsData: [], headers: [], worksheet, rawRows: [] });
                     return;
                 }
-                const headers = jsonRows[0] || [];
+                const headers  = jsonRows[0] || [];
                 const rowsData = jsonRows.slice(1).map(row => headers.map((_, i) => row[i] ?? ""));
                 sheetsData.push({ sheetName, rowsData, headers, worksheet, rawRows: jsonRows });
             });
 
-            if (sheetsData.length === 0) {
-                showEmptyState("El archivo no contiene hojas válidas.");
-                return;
-            }
+            if (!sheetsData.length) { showEmptyState("El archivo no contiene hojas válidas."); return; }
 
             currentSheetsData = sheetsData;
             familiasMode = {};
             ventaDiariaMode = {};
-            if (currentSheetsData.length > 0) {
-                selectedSheetName = currentSheetsData[0].sheetName;
-            }
+            selectedSheetName = sheetsData[0].sheetName;
             renderRadioButtons();
             renderSelectedTable();
+            showToast(`Archivo cargado: ${sheetsData.length} hoja(s)`, 'success');
         };
-        reader.onerror = () => alert("Error al leer el archivo.");
+        reader.onerror = () => showToast("Error al leer el archivo.", 'error');
         reader.readAsArrayBuffer(file);
     }
 
+    /* ── RADIO BUTTONS ── */
     function renderRadioButtons() {
         const container = document.getElementById('sheetsRadioGroup');
         if (!container) return;
         if (!currentSheetsData.length) {
-            container.innerHTML = '<div class="placeholder-text">Cargue un archivo Excel para visualizar hojas.</div>';
+            container.innerHTML = '<div class="placeholder-text"><i class="fas fa-file-upload" style="font-size:1.4rem;opacity:0.4;"></i><span>Cargue un archivo Excel</span></div>';
             return;
         }
         container.innerHTML = '';
-        currentSheetsData.forEach(sheet => {
-            const sheetName = sheet.sheetName;
-            const isChecked = (selectedSheetName === sheetName);
-            const div = document.createElement('div');
-            div.className = 'radio-item';
+        currentSheetsData.forEach((sheet, idx) => {
+            const sn        = sheet.sheetName;
+            const isChecked = selectedSheetName === sn;
+            const div       = document.createElement('div');
+            div.className   = 'radio-item' + (isChecked ? ' is-active' : '');
+            div.style.animationDelay = `${idx * 40}ms`;
             div.innerHTML = `
-                <input type="radio" name="sheetSelector" id="radio_${escapeId(sheetName)}" value="${escapeHtml(sheetName)}" ${isChecked ? 'checked' : ''}>
-                <label for="radio_${escapeId(sheetName)}">${escapeHtml(sheetName)}</label>
+                <input type="radio" name="sheetSelector" id="radio_${escapeId(sn)}" value="${escapeHtml(sn)}" ${isChecked ? 'checked' : ''}>
+                <label for="radio_${escapeId(sn)}">${escapeHtml(sn)}</label>
             `;
             const radio = div.querySelector('input');
-            radio.addEventListener('change', (e) => {
-                if (e.target.checked) {
-                    selectedSheetName = sheetName;
-                    renderSelectedTable();
-                    chartContainer.style.display = 'none';
-                    if (currentChart) {
-                        currentChart.destroy();
-                        currentChart = null;
-                    }
-                }
+            radio.addEventListener('change', ev => {
+                if (!ev.target.checked) return;
+                // Quitar activo anterior
+                container.querySelectorAll('.radio-item').forEach(el => el.classList.remove('is-active'));
+                div.classList.add('is-active');
+                selectedSheetName = sn;
+                renderSelectedTable();
+                chartContainer.style.display = 'none';
+                if (currentChart) { currentChart.destroy(); currentChart = null; }
             });
             container.appendChild(div);
         });
     }
 
+    /* ── TABLA SELECCIONADA ── */
     function renderSelectedTable() {
         const viewport = document.getElementById('sheetsViewport');
         viewport.innerHTML = '';
-        if (!currentSheetsData.length) {
-            showEmptyState("No hay hojas para mostrar.");
-            return;
-        }
-        const selectedSheet = currentSheetsData.find(s => s.sheetName === selectedSheetName);
-        if (selectedSheet) {
-            const card = createSheetCard(selectedSheet);
-            viewport.appendChild(card);
-        } else {
-            showEmptyState("Seleccione una hoja válida.");
-        }
+        if (!currentSheetsData.length) { showEmptyState("No hay hojas para mostrar."); return; }
+        const sel = currentSheetsData.find(s => s.sheetName === selectedSheetName);
+        if (sel) viewport.appendChild(createSheetCard(sel));
+        else showEmptyState("Seleccione una hoja válida.");
     }
 
-    function isNumericValue(value) {
-        if (value === null || value === undefined || value === "") return false;
-        const num = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
-        return !isNaN(num);
-    }
-
+    /* ══════════════════════════════════════════════════════
+       SHEET CARD
+    ══════════════════════════════════════════════════════ */
     function createSheetCard(sheet) {
         const { sheetName, rowsData, headers, worksheet, rawRows } = sheet;
         const card = document.createElement('div');
         card.className = 'sheet-card';
         card.setAttribute('data-sheetname', sheetName);
-        card.addEventListener('click', (e) => {
+        card.addEventListener('click', e => {
             if (e.target.closest('.btn-export-sheet')) return;
             showChartForSheet(sheetName, headers, rowsData, worksheet);
         });
@@ -188,222 +305,164 @@ document.addEventListener('DOMContentLoaded', () => {
         headerDiv.className = 'sheet-header';
         headerDiv.innerHTML = `
             <h3 class="sheet-title">${escapeHtml(sheetName)}</h3>
-            <button class="btn-export-sheet" data-sheet="${escapeHtml(sheetName)}"><i class="fas fa-file-export"></i> Exportar hoja</button>
+            <button class="btn-export-sheet" data-sheet="${escapeHtml(sheetName)}">
+                <i class="fas fa-file-export"></i> Exportar hoja
+            </button>
         `;
-        
+
         const contentWrapper = document.createElement('div');
         contentWrapper.className = 'sheet-content';
-        
-        // ========== HOJA "RESUMEN" (minicards) ==========
+
+        /* ── HOJA RESUMEN ── */
         if (normalizeString(sheetName) === 'resumen' && rawRows && rawRows.length >= 2) {
             const mainHeaders = rawRows[0] || [];
-            const subHeaders = rawRows[1] || [];
+            const subHeaders  = rawRows[1] || [];
             const groups = [];
             let i = 0;
             while (i < mainHeaders.length) {
                 const main = mainHeaders[i];
                 if (main && main.toString().trim() !== "") {
                     if (i + 1 < subHeaders.length) {
-                        const sub1 = subHeaders[i] || "";
-                        const sub2 = subHeaders[i+1] || "";
                         const dataRows = rawRows.slice(2);
-                        const values1 = dataRows.map(row => row[i] ?? "");
-                        const values2 = dataRows.map(row => row[i+1] ?? "");
                         groups.push({
-                            title: main.toString(),
-                            subTitle1: sub1.toString(),
-                            subTitle2: sub2.toString(),
-                            data1: values1,
-                            data2: values2,
-                            colIndex: i
+                            title:     main.toString(),
+                            subTitle1: (subHeaders[i]   || "").toString(),
+                            subTitle2: (subHeaders[i+1] || "").toString(),
+                            data1: dataRows.map(r => r[i]   ?? ""),
+                            data2: dataRows.map(r => r[i+1] ?? ""),
+                            colIndex: i,
                         });
                     }
                     i += 2;
-                } else {
-                    i++;
-                }
+                } else { i++; }
             }
-            const maxGroups = 8;
-            const groupsToShow = groups.slice(0, maxGroups);
+
+            const groupsToShow = groups.slice(0, 8);
             const gridContainer = document.createElement('div');
             gridContainer.className = 'resumen-grid';
-            
-            gridContainer.style.gridTemplateColumns = `repeat(2, 1fr)`;
-            
+            gridContainer.style.gridTemplateColumns = 'repeat(2, 1fr)';
+
             let dnThreshold = null;
             if (rawRows.length > 3 && rawRows[3] && rawRows[3][5] !== undefined && rawRows[3][5] !== "") {
-                const thresholdRaw = rawRows[3][5];
-                dnThreshold = parseFloat(String(thresholdRaw).replace(/[^0-9.-]/g, ''));
-                if (isNaN(dnThreshold)) dnThreshold = null;
+                const t = parseFloat(String(rawRows[3][5]).replace(/[^0-9.-]/g, ''));
+                if (!isNaN(t)) dnThreshold = t;
             }
-            
-            groupsToShow.forEach(group => {
-                const normalizedTitle = normalizeString(group.title);
-                const isDN = normalizedTitle === 'dn';
-                const singleRowGroups = ['mes', 'cedis mes', 'trimestre', 'cartera vencida', 'familias'];
-                const showOnlyFirstRow = singleRowGroups.includes(normalizedTitle);
-                const isSpecialGroup = (normalizedTitle === 'dn' || normalizedTitle === 'familias');
-                
+
+            const parsePercentageNum = value => {
+                if (value === null || value === undefined || value === "") return NaN;
+                let num;
+                if (typeof value === 'number') num = Math.abs(value) >= 1 ? value : value * 100;
+                else {
+                    const parsed = parseFloat(String(value).trim().replace('%', ''));
+                    if (isNaN(parsed)) return NaN;
+                    num = Math.abs(parsed) >= 1 ? parsed : parsed * 100;
+                }
+                return num;
+            };
+
+            const getColorClassForNormalGroup = (value, title) => {
+                const t = normalizeString(title);
+                const num = parsePercentageNum(value);
+                if (isNaN(num)) return '';
+                if (t === 'mes' || t === 'cedis mes' || t === 'trimestre') {
+                    if (num > 99.9) return 'cell-green';
+                    if (num < 90)   return 'cell-red';
+                    return 'cell-yellow';
+                }
+                if (t === 'cartera vencida') return num > 3.5 ? 'cell-yellow' : 'cell-green';
+                return '';
+            };
+
+            const formatNormalCell = (value, isRight, title) => {
+                if (value === null || value === undefined || value === "") return { display: "—", color: '' };
+                if (!isRight) {
+                    const num = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
+                    if (!isNaN(num)) return { display: formatCurrencyForResumen(value, true), color: '' };
+                    return { display: value.toString(), color: '' };
+                }
+                const num = parsePercentageNum(value);
+                if (!isNaN(num)) {
+                    return { display: (Math.round(num * 10) / 10).toFixed(1) + "%", color: getColorClassForNormalGroup(value, title) };
+                }
+                return { display: value.toString(), color: '' };
+            };
+
+            const formatFamiliesCell = value => {
+                if (value === null || value === undefined || value === "") return { display: "—", color: '' };
+                const num = parsePercentageNum(value);
+                if (!isNaN(num)) {
+                    return { display: Math.round(num) + "%", color: num > 0 ? 'cell-green' : 'cell-red' };
+                }
+                return { display: value.toString(), color: '' };
+            };
+
+            const formatDNCell = (value, rowIdx) => {
+                if (value === null || value === undefined || value === "") return { display: "—", color: '' };
+                const num = parsePercentageNum(value);
+                if (!isNaN(num)) {
+                    const rounded = Math.round(num);
+                    let color = '';
+                    if (rowIdx === 0 && dnThreshold !== null) color = num > dnThreshold ? 'cell-green' : 'cell-red';
+                    return { display: rounded + "%", color };
+                }
+                return { display: value.toString(), color: '' };
+            };
+
+            groupsToShow.forEach((group, gIdx) => {
+                const nt = normalizeString(group.title);
+                const isDN = nt === 'dn';
+                const showOnlyFirst = ['mes', 'cedis mes', 'trimestre', 'cartera vencida', 'familias'].includes(nt);
+
                 const miniCard = document.createElement('div');
                 miniCard.className = 'resumen-mini-card';
-                
+                miniCard.style.animationDelay = `${gIdx * 55}ms`;
+
                 const table = document.createElement('table');
                 table.className = 'resumen-mini-table';
                 const thead = document.createElement('thead');
-                const headerRow = document.createElement('tr');
-                const th1 = document.createElement('th');
-                th1.textContent = group.subTitle1;
-                const th2 = document.createElement('th');
-                th2.textContent = group.subTitle2;
-                headerRow.appendChild(th1);
-                headerRow.appendChild(th2);
-                thead.appendChild(headerRow);
+                thead.innerHTML = `<tr><th>${escapeHtml(group.subTitle1)}</th><th>${escapeHtml(group.subTitle2)}</th></tr>`;
                 table.appendChild(thead);
-                
+
                 const tbody = document.createElement('tbody');
-                
-                const parsePercentageNum = (value) => {
-                    if (value === null || value === undefined || value === "") return NaN;
-                    let num = 0;
-                    if (typeof value === 'number') {
-                        if (Math.abs(value) >= 1) num = value;
-                        else num = value * 100;
-                    } else {
-                        const str = String(value).trim().replace('%', '');
-                        let parsed = parseFloat(str);
-                        if (isNaN(parsed)) return NaN;
-                        if (Math.abs(parsed) >= 1) num = parsed;
-                        else num = parsed * 100;
-                    }
-                    return num;
+
+                const makeCells = (left, right, extraSmall) => {
+                    const tr = document.createElement('tr');
+                    if (extraSmall) tr.className = 'resumen-row-small';
+                    [left, right].forEach(cell => {
+                        const td = document.createElement('td');
+                        td.textContent = cell.display;
+                        if (cell.color) td.className = cell.color;
+                        tr.appendChild(td);
+                    });
+                    tbody.appendChild(tr);
                 };
-                
-                const getColorClassForNormalGroup = (value, groupTitle) => {
-                    const titleNorm = normalizeString(groupTitle);
-                    const num = parsePercentageNum(value);
-                    if (isNaN(num)) return '';
-                    if (titleNorm === 'mes' || titleNorm === 'cedis mes' || titleNorm === 'trimestre') {
-                        if (num > 99.9) return 'cell-green';
-                        if (num < 90) return 'cell-red';
-                        return 'cell-yellow';
-                    } else if (titleNorm === 'cartera vencida') {
-                        if (num > 3.5) return 'cell-yellow';
-                        return 'cell-green';
-                    }
-                    return '';
-                };
-                
-                const formatNormalCell = (value, isRightColumn, groupTitle) => {
-                    if (value === null || value === undefined || value === "") return { display: "—", color: '' };
-                    let display = "—";
-                    let color = '';
-                    if (!isRightColumn) {
-                        const num = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
-                        if (!isNaN(num)) {
-                            display = formatCurrencyForResumen(value, true);
-                        } else {
-                            display = value.toString();
-                        }
-                    } else {
-                        const num = parsePercentageNum(value);
-                        if (!isNaN(num)) {
-                            const rounded = (Math.round(num * 10) / 10).toFixed(1);
-                            display = rounded + "%";
-                            color = getColorClassForNormalGroup(value, groupTitle);
-                        } else {
-                            display = value.toString();
-                        }
-                    }
-                    return { display, color };
-                };
-                
-                const formatFamiliesCell = (value) => {
-                    if (value === null || value === undefined || value === "") return { display: "—", color: '' };
-                    const num = parsePercentageNum(value);
-                    if (!isNaN(num)) {
-                        const rounded = Math.round(num);
-                        const color = (num > 0) ? 'cell-green' : 'cell-red';
-                        return { display: rounded + "%", color };
-                    }
-                    return { display: value.toString(), color: '' };
-                };
-                
-                const formatDNCell = (value, rowIndex) => {
-                    if (value === null || value === undefined || value === "") return { display: "—", color: '' };
-                    const num = parsePercentageNum(value);
-                    let display = "—";
-                    let color = '';
-                    if (!isNaN(num)) {
-                        const rounded = Math.round(num);
-                        display = rounded + "%";
-                        if (rowIndex === 0 && dnThreshold !== null && !isNaN(dnThreshold)) {
-                            color = (num > dnThreshold) ? 'cell-green' : 'cell-red';
-                        }
-                    } else {
-                        display = value.toString();
-                    }
-                    return { display, color };
-                };
-                
-                if (group.data1.length > 0 && group.data2.length > 0) {
-                    const row2 = document.createElement('tr');
-                    const leftValue = group.data1[0];
-                    const rightValue = group.data2[0];
-                    const isLeftNumeric = isNumericValue(leftValue);
-                    const isRightNumeric = isNumericValue(rightValue);
-                    if (isLeftNumeric || isRightNumeric) {
-                        row2.className = 'resumen-row-first';
-                    }
+
+                if (group.data1.length > 0) {
+                    const isLeftNum  = isNumericValue(group.data1[0]);
+                    const isRightNum = isNumericValue(group.data2[0]);
+                    const row1 = document.createElement('tr');
+                    if (isLeftNum || isRightNum) row1.className = 'resumen-row-first';
                     let left, right;
-                    if (isDN) {
-                        left = formatDNCell(leftValue, 0);
-                        right = formatDNCell(rightValue, 0);
-                    } else if (normalizedTitle === 'familias') {
-                        left = formatFamiliesCell(leftValue);
-                        right = formatFamiliesCell(rightValue);
-                    } else {
-                        left = formatNormalCell(leftValue, false, group.title);
-                        right = formatNormalCell(rightValue, true, group.title);
-                    }
-                    const td1 = document.createElement('td');
-                    td1.textContent = left.display;
-                    if (left.color) td1.className = left.color;
-                    const td2 = document.createElement('td');
-                    td2.textContent = right.display;
-                    if (right.color) td2.className = right.color;
-                    row2.appendChild(td1);
-                    row2.appendChild(td2);
-                    tbody.appendChild(row2);
+                    if (isDN)              { left = formatDNCell(group.data1[0], 0); right = formatDNCell(group.data2[0], 0); }
+                    else if (nt === 'familias') { left = formatFamiliesCell(group.data1[0]); right = formatFamiliesCell(group.data2[0]); }
+                    else                   { left = formatNormalCell(group.data1[0], false, group.title); right = formatNormalCell(group.data2[0], true, group.title); }
+                    [left, right].forEach(cell => {
+                        const td = document.createElement('td');
+                        td.textContent = cell.display;
+                        if (cell.color) td.className = cell.color;
+                        row1.appendChild(td);
+                    });
+                    tbody.appendChild(row1);
                 }
-                
-                if (!showOnlyFirstRow && group.data1.length > 1 && group.data2.length > 1) {
-                    const row3 = document.createElement('tr');
+
+                if (!showOnlyFirst && group.data1.length > 1) {
                     let left, right;
-                    if (isDN) {
-                        left = formatDNCell(group.data1[1], 1);
-                        right = formatDNCell(group.data2[1], 1);
-                    } else if (normalizedTitle === 'familias') {
-                        left = formatFamiliesCell(group.data1[1]);
-                        right = formatFamiliesCell(group.data2[1]);
-                    } else {
-                        left = formatNormalCell(group.data1[1], false, group.title);
-                        right = formatNormalCell(group.data2[1], true, group.title);
-                    }
-                    const td1 = document.createElement('td');
-                    td1.textContent = left.display;
-                    if (left.color) td1.className = left.color;
-                    const td2 = document.createElement('td');
-                    td2.textContent = right.display;
-                    if (right.color) td2.className = right.color;
-                    if (isDN) {
-                        td1.style.fontSize = '0.65rem';
-                        td2.style.fontSize = '0.65rem';
-                    }
-                    row3.appendChild(td1);
-                    row3.appendChild(td2);
-                    tbody.appendChild(row3);
+                    if (isDN)              { left = formatDNCell(group.data1[1], 1); right = formatDNCell(group.data2[1], 1); }
+                    else if (nt === 'familias') { left = formatFamiliesCell(group.data1[1]); right = formatFamiliesCell(group.data2[1]); }
+                    else                   { left = formatNormalCell(group.data1[1], false, group.title); right = formatNormalCell(group.data2[1], true, group.title); }
+                    makeCells(left, right, isDN);
                 }
-                
+
                 table.appendChild(tbody);
                 const miniHeader = document.createElement('div');
                 miniHeader.className = 'resumen-mini-header';
@@ -412,191 +471,137 @@ document.addEventListener('DOMContentLoaded', () => {
                 miniCard.appendChild(table);
                 gridContainer.appendChild(miniCard);
             });
+
             contentWrapper.appendChild(gridContainer);
         } else {
+            /* ── TABLA NORMAL ── */
             const tableWrapper = document.createElement('div');
             tableWrapper.className = 'table-wrapper';
-            const table = buildDataTable(sheetName, headers, rowsData, worksheet);
-            tableWrapper.appendChild(table);
+            tableWrapper.appendChild(buildDataTable(sheetName, headers, rowsData, worksheet));
             contentWrapper.appendChild(tableWrapper);
         }
-        
+
         card.appendChild(headerDiv);
         card.appendChild(contentWrapper);
 
-        const exportBtn = headerDiv.querySelector('.btn-export-sheet');
-        exportBtn.addEventListener('click', (e) => {
+        headerDiv.querySelector('.btn-export-sheet').addEventListener('click', e => {
             e.stopPropagation();
             exportSingleSheetToExcel(sheetName);
         });
         return card;
     }
-    
-    function formatCurrencyForResumen(value, integerMode = true) {
-        if (value === null || value === undefined || value === "") return "—";
-        let num = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
-        if (isNaN(num)) return value.toString();
-        const options = integerMode 
-            ? { style: 'currency', currency: 'MXN', minimumFractionDigits: 0, maximumFractionDigits: 0 }
-            : { style: 'currency', currency: 'MXN', minimumFractionDigits: 2, maximumFractionDigits: 2 };
-        return new Intl.NumberFormat('es-MX', options).format(num);
-    }
-    
-    function formatPercentageForResumen(value, decimals = 1) {
-        if (value === null || value === undefined || value === "") return "—";
-        let num = 0;
-        if (typeof value === 'number') {
-            if (Math.abs(value) >= 1) num = value;
-            else num = value * 100;
-        } else {
-            const str = String(value).trim().replace('%', '');
-            let parsed = parseFloat(str);
-            if (isNaN(parsed)) return value.toString();
-            if (Math.abs(parsed) >= 1) num = parsed;
-            else num = parsed * 100;
-        }
-        const rounded = (decimals === 0) ? Math.round(num) : (Math.round(num * Math.pow(10, decimals)) / Math.pow(10, decimals));
-        return rounded.toFixed(decimals) + "%";
-    }
 
+    /* ══════════════════════════════════════════════════════
+       BUILD DATA TABLE
+    ══════════════════════════════════════════════════════ */
     function buildDataTable(sheetName, headers, rowsData, worksheet) {
         const table = document.createElement('table');
         table.className = 'data-table';
 
-        const thead = document.createElement('thead');
+        const thead     = document.createElement('thead');
         const headerRow = document.createElement('tr');
-        headers.forEach(h => {
-            const th = document.createElement('th');
-            th.textContent = h;
-            headerRow.appendChild(th);
-        });
+        headers.forEach(h => { const th = document.createElement('th'); th.textContent = h; headerRow.appendChild(th); });
         thead.appendChild(headerRow);
         table.appendChild(thead);
 
         let thresholdDN = null;
         if (normalizeString(sheetName) === 'dn' && worksheet) {
-            const cellC70 = worksheet['C70'];
-            if (cellC70 && cellC70.v !== undefined && cellC70.v !== null) {
-                thresholdDN = parseFloat(cellC70.v);
-                if (isNaN(thresholdDN)) thresholdDN = null;
-            }
+            const c = worksheet['C70'];
+            if (c && c.v !== undefined) { thresholdDN = parseFloat(c.v); if (isNaN(thresholdDN)) thresholdDN = null; }
         }
 
-        let dataRows = rowsData;
         const sheetLower = normalizeString(sheetName);
+        let dataRows = rowsData;
         if (sheetLower === 'dn') {
-            const nonEmptyRows = rowsData.filter(row => 
-                row.some(cell => cell !== undefined && cell !== null && cell !== "")
-            );
-            const filteredRows = nonEmptyRows.slice(0, -2);
-            dataRows = filteredRows;
+            const nonEmpty = rowsData.filter(r => r.some(c => c !== undefined && c !== null && c !== ""));
+            dataRows = nonEmpty.slice(0, -2);
         }
 
         const tbody = document.createElement('tbody');
         dataRows.forEach((row, rowIndex) => {
             const tr = document.createElement('tr');
             headers.forEach((header, idx) => {
-                const rawValue = row[idx];
-                let displayValue = rawValue;
-                let cellClass = '';
-                const lowerHeader = normalizeString(header);
-                const sheetLowerLocal = normalizeString(sheetName);
+                const rawValue      = row[idx];
+                let   displayValue  = rawValue;
+                let   cellClass     = '';
+                const lh            = normalizeString(header);
+                const sl            = sheetLower;
 
-                if (sheetLowerLocal === 'familias') {
-                    if (idx >= 1 && idx <= 4) {
-                        displayValue = formatCurrency(rawValue, true);
-                        cellClass = 'currency-cell';
+                if (sl === 'familias') {
+                    if (idx >= 1 && idx <= 4) { displayValue = formatCurrency(rawValue, true);              cellClass = 'currency-cell'; }
+                    else if (idx === 5 || idx === 6) { displayValue = parseToPercentage(rawValue, 1).formatted; cellClass = 'percentage-cell'; }
+                    if (lh.includes('periodo act. vs periodo ant.') || lh.includes('trimestre act. vs trimestre ant.')) {
+                        const n = parsePercentageValue(rawValue);
+                        if (!isNaN(n)) cellClass += n > 0 ? ' cell-green' : n < 0 ? ' cell-red' : '';
                     }
-                    else if (idx === 5 || idx === 6) {
-                        const p = parseToPercentage(rawValue, 1);
-                        displayValue = p.formatted;
-                        cellClass = 'percentage-cell';
-                    }
-                    if (lowerHeader.includes('periodo act. vs periodo ant.') || lowerHeader.includes('trimestre act. vs trimestre ant.')) {
-                        const numVal = parsePercentageValue(rawValue);
-                        if (!isNaN(numVal)) {
-                            if (numVal > 0) cellClass += ' cell-green';
-                            else if (numVal < 0) cellClass += ' cell-red';
-                        }
-                    }
-                }
-                else if (sheetLowerLocal === 'cedis cartera vencida') {
-                    if (idx >= 1 && idx <= 3) {
-                        displayValue = formatCurrency(rawValue, true);
-                        cellClass = 'currency-cell';
-                    }
-                }
-                else if (sheetLowerLocal === 'venta diaria' && (rowIndex + 1) % 2 === 0) {
-                    displayValue = formatCurrency(rawValue, false);
-                    cellClass = 'currency-cell';
-                }
-                else if (sheetLowerLocal === 'cartera vencida' && lowerHeader.includes('suma de > 15 dias')) {
-                    displayValue = formatCurrency(rawValue, true);
-                    cellClass = 'currency-cell';
-                }
-                else if (sheetLowerLocal === 'cartera vencida' && lowerHeader.includes('suma de % 15 dias')) {
+                } else if (sl === 'cedis cartera vencida') {
+                    if (idx >= 1 && idx <= 3) { displayValue = formatCurrency(rawValue, true); cellClass = 'currency-cell'; }
+                } else if (sl === 'venta diaria' && (rowIndex + 1) % 2 === 0) {
+                    displayValue = formatCurrency(rawValue, false); cellClass = 'currency-cell';
+                } else if (sl === 'cartera vencida' && lh.includes('suma de > 15 dias')) {
+                    displayValue = formatCurrency(rawValue, true); cellClass = 'currency-cell';
+                } else if (sl === 'cartera vencida' && lh.includes('suma de % 15 dias')) {
                     const p = parseToPercentage(rawValue, 2);
-                    displayValue = p.formatted;
-                    cellClass = 'percentage-cell';
+                    displayValue = p.formatted; cellClass = 'percentage-cell';
                     if (p.numeric > 3.50) cellClass += ' cell-yellow';
-                }
-                else if (sheetLowerLocal === 'semaforizacion gerente') {
-                    const percentCols = ['4to trim 2024', '1er trim 2025', '2do trim 2025', '3er trim 2025', 'promedio'];
-                    const isPercentCol = percentCols.some(c => lowerHeader.includes(c));
-                    if (isPercentCol) {
-                        const p = parseToPercentage(rawValue, 0);
-                        displayValue = p.formatted;
-                        cellClass = 'percentage-cell';
-                        if (p.numeric < 90) cellClass += ' cell-red';
-                        else if (p.numeric > 99) cellClass += ' cell-green';
-                        else cellClass += ' cell-yellow';
+                } else if (sl === 'semaforizacion gerente') {
+                    const pc = ['4to trim 2024','1er trim 2025','2do trim 2025','3er trim 2025','promedio'];
+                    if (pc.some(c => lh.includes(c))) {
+                        /* Excel guarda 100% como 1.0 (decimal). Siempre multiplicar × 100. */
+                        const parseExcelPct = v => {
+                            if (v === null || v === undefined || v === '') return { formatted: '—', numeric: 0 };
+                            let num;
+                            if (typeof v === 'number') {
+                                num = v * 100;          /* 1.0 → 100, 0.95 → 95 */
+                            } else {
+                                const s = String(v).trim().replace('%', '');
+                                const parsed = parseFloat(s);
+                                if (isNaN(parsed)) return { formatted: String(v), numeric: 0 };
+                                /* Si viene como texto "100" (ya es %), usarlo directo */
+                                num = Math.abs(parsed) > 1 ? parsed : parsed * 100;
+                            }
+                            const rounded = Math.round(num);
+                            return { formatted: rounded + '%', numeric: rounded };
+                        };
+                        const p = parseExcelPct(rawValue);
+                        displayValue = p.formatted; cellClass = 'percentage-cell';
+                        if (p.numeric < 90)       cellClass += ' cell-red';
+                        else if (p.numeric > 99)  cellClass += ' cell-green';
+                        else                      cellClass += ' cell-yellow';
                     }
-                }
-                else {
-                    const isSemaforizacion = (sheetLowerLocal === 'semaforizacion');
-                    if (isSemaforizacion && idx >= 2 && idx <= 6) {
-                        const percentVal = parseToPercentage(rawValue, 2);
-                        displayValue = percentVal.formatted;
-                        cellClass = 'percentage-cell';
-                        const numeric = percentVal.numeric;
-                        if (numeric >= 100) cellClass += ' cell-green';
-                        else if (numeric >= 90) cellClass += ' cell-yellow';
+                } else if (sl === 'semaforizacion') {
+                    if (idx >= 2 && idx <= 6) {
+                        const p = parseToPercentage(rawValue, 2);
+                        displayValue = p.formatted; cellClass = 'percentage-cell';
+                        if (p.numeric >= 100) cellClass += ' cell-green';
+                        else if (p.numeric >= 90) cellClass += ' cell-yellow';
                         else cellClass += ' cell-red';
-                    } else {
-                        const format = getFormatForCell(sheetName, lowerHeader, rawValue);
-                        if (format.formatted) displayValue = format.formatted;
-                        if (format.isPercentage) cellClass = 'percentage-cell';
-                        if (format.isCurrency) cellClass = 'currency-cell';
+                    }
+                } else {
+                    const fmt = getFormatForCell(sheetName, lh, rawValue);
+                    if (fmt.formatted) displayValue = fmt.formatted;
+                    if (fmt.isPercentage) cellClass = 'percentage-cell';
+                    if (fmt.isCurrency)   cellClass = 'currency-cell';
 
-                        if (sheetLowerLocal === 'dn' && thresholdDN !== null) {
-                            if (lowerHeader.includes('% cub cuota venta') || lowerHeader.includes('% cub clientes')) {
-                                const percentValue = parseToPercentage(rawValue, 2);
-                                const numericPercent = percentValue.numeric;
-                                if (numericPercent < thresholdDN) cellClass += ' cell-red';
-                                else if (numericPercent > thresholdDN) cellClass += ' cell-green';
-                                else cellClass += ' cell-yellow';
-                            }
+                    if (sl === 'dn' && thresholdDN !== null) {
+                        if (lh.includes('% cub cuota venta') || lh.includes('% cub clientes')) {
+                            const pv = parseToPercentage(rawValue, 2);
+                            if (pv.numeric < thresholdDN)      cellClass += ' cell-red';
+                            else if (pv.numeric > thresholdDN) cellClass += ' cell-green';
+                            else                               cellClass += ' cell-yellow';
                         }
-
-                        // === NUEVO: Color condicional para "Venta Faltante" y "No. Ctes que faltan p/cuota" en hoja DN ===
-                        if (sheetLowerLocal === 'dn') {
-                            const colLower = lowerHeader;
-                            if (colLower.includes('venta faltante') || colLower.includes('no. ctes que faltan p/cuota')) {
-                                const numVal = parseFloat(String(rawValue).replace(/[^0-9.-]/g, ''));
-                                if (!isNaN(numVal)) {
-                                    if (numVal > 0) cellClass += ' cell-green';
-                                    else cellClass += ' cell-red';
-                                }
-                            }
+                    }
+                    if (sl === 'dn') {
+                        if (lh.includes('venta faltante') || lh.includes('no. ctes que faltan p/cuota')) {
+                            const n = parseFloat(String(rawValue).replace(/[^0-9.-]/g, ''));
+                            if (!isNaN(n)) cellClass += n > 0 ? ' cell-green' : ' cell-red';
                         }
-
-                        if (lowerHeader.includes('cubrimiento') && lowerHeader.includes('cuota') && sheetLowerLocal !== 'dn' && !isSemaforizacion && sheetLowerLocal !== 'semaforizacion gerente' && sheetLowerLocal !== 'familias' && sheetLowerLocal !== 'cedis cartera vencida' && sheetLowerLocal !== 'resumen') {
-                            const percentValue = parseToPercentage(rawValue, 1);
-                            const numericPercent = percentValue.numeric;
-                            if (numericPercent < 90.0) cellClass += ' cell-red';
-                            else if (numericPercent > 99.9) cellClass += ' cell-green';
-                            else cellClass += ' cell-yellow';
-                        }
+                    }
+                    if (lh.includes('cubrimiento') && lh.includes('cuota') && sl !== 'dn' && sl !== 'semaforizacion' && sl !== 'semaforizacion gerente' && sl !== 'familias' && sl !== 'cedis cartera vencida' && sl !== 'resumen') {
+                        const pv = parseToPercentage(rawValue, 1);
+                        if (pv.numeric < 90)       cellClass += ' cell-red';
+                        else if (pv.numeric > 99.9) cellClass += ' cell-green';
+                        else                        cellClass += ' cell-yellow';
                     }
                 }
 
@@ -612,781 +617,602 @@ document.addEventListener('DOMContentLoaded', () => {
         return table;
     }
 
-    function normalizeString(str) {
-        return str.toLowerCase()
-            .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-            .trim()
-            .replace(/\s+/g, ' ');
+    /* ══════════════════════════════════════════════════════
+       FORMAT HELPERS
+    ══════════════════════════════════════════════════════ */
+    function formatCurrencyForResumen(value, integerMode = true) {
+        if (value === null || value === undefined || value === "") return "—";
+        const num = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
+        if (isNaN(num)) return value.toString();
+        const opts = integerMode
+            ? { style: 'currency', currency: 'MXN', minimumFractionDigits: 0, maximumFractionDigits: 0 }
+            : { style: 'currency', currency: 'MXN', minimumFractionDigits: 2, maximumFractionDigits: 2 };
+        return new Intl.NumberFormat('es-MX', opts).format(num);
     }
 
-    function getFormatForCell(sheetName, colNameNormalized, rawValue) {
-        const sheetLower = normalizeString(sheetName);
-        const colLower = colNameNormalized;
+    function formatCurrency(value, integerMode = false) {
+        if (value === null || value === undefined || value === "") return "—";
+        const num = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
+        if (isNaN(num)) return String(value);
+        const opts = integerMode
+            ? { style: 'currency', currency: 'MXN', minimumFractionDigits: 0, maximumFractionDigits: 0 }
+            : { style: 'currency', currency: 'MXN', minimumFractionDigits: 2, maximumFractionDigits: 2 };
+        return new Intl.NumberFormat('es-MX', opts).format(num);
+    }
 
-        if (sheetLower === 'cedis mes') {
-            if (colLower.includes('venta pesos') || colLower.includes('estimado al cierre') || colLower === 'cuota') {
+    function parseToPercentage(value, decimals = 1) {
+        if (value === null || value === undefined || value === "") return { formatted: "—", numeric: 0 };
+        let num;
+        if (typeof value === 'number') num = Math.abs(value) >= 1 ? value : value * 100;
+        else {
+            const parsed = parseFloat(String(value).trim().replace('%', ''));
+            if (isNaN(parsed)) return { formatted: String(value), numeric: 0 };
+            num = Math.abs(parsed) >= 1 ? parsed : parsed * 100;
+        }
+        const rounded  = decimals === 0 ? Math.round(num) : Math.round(num * 10 ** decimals) / 10 ** decimals;
+        const formatted = rounded.toFixed(decimals) + "%";
+        return { formatted, numeric: rounded };
+    }
+
+    function parsePercentageValue(value) {
+        if (value === null || value === undefined || value === "") return NaN;
+        if (typeof value === 'number') return Math.abs(value) >= 1 ? value : value * 100;
+        const parsed = parseFloat(String(value).trim().replace('%', ''));
+        if (isNaN(parsed)) return NaN;
+        return Math.abs(parsed) >= 1 ? parsed : parsed * 100;
+    }
+
+    function getFormatForCell(sheetName, colLower, rawValue) {
+        const sl = normalizeString(sheetName);
+
+        const currencyColumns = ['venta en pesos','estimado al cierre','cuota','abr','feb','mzo','venta faltante'];
+        const isPercent = c => c.includes('cubrimiento') || c.includes('%var') || c.includes('% cub');
+
+        if (sl === 'cedis mes' || sl === 'mes') {
+            if (colLower.includes('venta pesos') || colLower.includes('estimado al cierre') || colLower === 'cuota')
                 return { formatted: formatCurrency(rawValue, true), isCurrency: true };
-            }
-            if (colLower.includes('cubrimiento') && colLower.includes('cuota')) {
+            if (colLower.includes('cubrimiento') && colLower.includes('cuota'))
                 return { formatted: parseToPercentage(rawValue, 1).formatted, isPercentage: true };
-            }
-            if (colLower.includes('%var') || colLower.includes('% var')) {
+            if (colLower.includes('%var') || colLower.includes('% var'))
                 return { formatted: parseToPercentage(rawValue, 0).formatted, isPercentage: true };
-            }
         }
-        if (sheetLower === 'mes') {
-            if (colLower.includes('venta pesos') || colLower.includes('estimado al cierre') || colLower === 'cuota') {
+        if (sl === 'trimestre') {
+            if (colLower.includes('venta pesos') || colLower.includes('estimado al cierre') || colLower === 'cuota')
                 return { formatted: formatCurrency(rawValue, true), isCurrency: true };
-            }
-            if (colLower.includes('cubrimiento') && colLower.includes('cuota')) {
-                return { formatted: parseToPercentage(rawValue, 1).formatted, isPercentage: true };
-            }
-            if (colLower.includes('%var') || colLower.includes('% var')) {
-                return { formatted: parseToPercentage(rawValue, 0).formatted, isPercentage: true };
-            }
         }
-        if (sheetLower === 'trimestre') {
-            if (colLower.includes('venta pesos') || colLower.includes('estimado al cierre') || colLower === 'cuota') {
+        if (sl === 'cartera vencida') {
+            if (['b','c','d','abr','feb','mzo'].includes(colLower))
                 return { formatted: formatCurrency(rawValue, true), isCurrency: true };
-            }
         }
-        if (sheetLower === 'cartera vencida') {
-            if (colLower === 'b' || colLower === 'c' || colLower === 'd' || colLower === 'abr' || colLower === 'feb' || colLower === 'mzo') {
-                return { formatted: formatCurrency(rawValue, true), isCurrency: true };
-            }
+        if (sl === 'dn' && colLower.includes('no. ctes que faltan p/cuota')) {
+            const n = parseFloat(String(rawValue).replace(/[^0-9.-]/g, ''));
+            return { formatted: isNaN(n) ? "—" : Math.round(n).toLocaleString('es-MX') };
         }
-        if (sheetLower === 'dn') {
-            if (colLower.includes('no. ctes que faltan p/cuota')) {
-                const num = parseFloat(String(rawValue).replace(/[^0-9.-]/g, ''));
-                const formatted = isNaN(num) ? "—" : Math.round(num).toLocaleString('es-MX');
-                return { formatted: formatted, isCurrency: false, isPercentage: false };
-            }
-        }
-        if (colLower.includes('cubrimiento') || colLower.includes('%var') || colLower.includes('% cub')) {
-            const p = parseToPercentage(rawValue, 1);
-            return { formatted: p.formatted, isPercentage: true };
-        }
-        const currencyColumnsGeneral = ['venta en pesos', 'estimado al cierre', 'cuota', 'abr', 'feb', 'mzo', 'venta faltante'];
-        if (currencyColumnsGeneral.some(c => colLower.includes(c))) {
-            if (sheetLower === 'dn' && colLower.includes('venta faltante')) return { formatted: formatCurrency(rawValue, true), isCurrency: true };
+        if (isPercent(colLower)) return { formatted: parseToPercentage(rawValue, 1).formatted, isPercentage: true };
+        if (currencyColumns.some(c => colLower.includes(c))) {
+            if (sl === 'dn' && colLower.includes('venta faltante')) return { formatted: formatCurrency(rawValue, true), isCurrency: true };
             return { formatted: formatCurrency(rawValue, false), isCurrency: true };
         }
         return { formatted: null };
     }
 
-    function formatCurrency(value, integerMode = false) {
-        if (value === null || value === undefined || value === "") return "—";
-        let num = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
-        if (isNaN(num)) return String(value);
-        const options = integerMode 
-            ? { style: 'currency', currency: 'MXN', minimumFractionDigits: 0, maximumFractionDigits: 0 }
-            : { style: 'currency', currency: 'MXN', minimumFractionDigits: 2, maximumFractionDigits: 2 };
-        return new Intl.NumberFormat('es-MX', options).format(num);
+    /* ══════════════════════════════════════════════════════
+       GRÁFICAS — ANIMACIONES PREMIUM
+    ══════════════════════════════════════════════════════ */
+
+    /** Configuración común de colores según tema */
+    function getThemeColors() {
+        const dark = document.body.classList.contains('dark-theme');
+        return {
+            isDark:    dark,
+            text:      dark ? '#e8edf4' : '#0f1c2e',
+            grid:      dark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.08)',
+            tooltip:   dark ? '#0d1520' : '#ffffff',
+            accent:    dark ? '#d32f2f' : '#2563eb',
+            green:     dark ? '#22c55e' : '#16a34a',
+            yellow:    dark ? '#eab308' : '#ca8a04',
+            red:       dark ? '#ef4444' : '#dc2626',
+            greenBg:   dark ? 'rgba(34,197,94,0.18)' : 'rgba(22,163,74,0.15)',
+            yellowBg:  dark ? 'rgba(234,179,8,0.18)' : 'rgba(202,138,4,0.12)',
+            redBg:     dark ? 'rgba(239,68,68,0.18)' : 'rgba(220,38,38,0.12)',
+        };
     }
 
-    function parseToPercentage(value, decimals = 1) {
-        if (value === null || value === undefined || value === "") return { formatted: "—", numeric: 0 };
-        let num = 0;
-        if (typeof value === 'number') {
-            if (Math.abs(value) >= 1) num = value;
-            else num = value * 100;
-        } else {
-            const str = String(value).trim().replace('%', '');
-            let parsed = parseFloat(str);
-            if (isNaN(parsed)) return { formatted: String(value), numeric: 0 };
-            if (Math.abs(parsed) >= 1) num = parsed;
-            else num = parsed * 100;
-        }
-        const rounded = (decimals === 0) ? Math.round(num) : (Math.round(num * Math.pow(10, decimals)) / Math.pow(10, decimals));
-        const formatted = (decimals === 0) ? rounded.toFixed(0) + "%" : rounded.toFixed(decimals) + "%";
-        return { formatted: formatted, numeric: rounded };
-    }
+    /** Barras con animación stagger por barra (Chart.js 4 compatible) */
+    function buildBarConfig(labels, values, colors, datasetLabel, smallFonts = false) {
+        const c  = getThemeColors();
+        const fs = smallFonts
+            ? { legend: 9, tooltip: 8, y: 8, x: 7 }
+            : { legend: 11, tooltip: 10, y: 10, x: 9 };
 
-    function parsePercentageValue(value) {
-        if (value === null || value === undefined || value === "") return NaN;
-        let num = 0;
-        if (typeof value === 'number') {
-            if (Math.abs(value) >= 1) num = value;
-            else num = value * 100;
-        } else {
-            const str = String(value).trim().replace('%', '');
-            let parsed = parseFloat(str);
-            if (isNaN(parsed)) return NaN;
-            if (Math.abs(parsed) >= 1) num = parsed;
-            else num = parsed * 100;
-        }
-        return num;
-    }
-
-    // ========== GRÁFICOS ==========
-    function showFamiliesPieChart(sheetName, headers, rowsData, mode) {
-        const isPeriodo = (mode === 0);
-        const ventaColName = isPeriodo ? 'venta periodo act.' : 'venta trimestre act.';
-        const varColName = isPeriodo ? 'periodo act. vs periodo ant.' : 'trimestre act. vs trimestre ant.';
-        
-        let ventaIdx = -1, varIdx = -1;
-        for (let i = 0; i < headers.length; i++) {
-            const h = normalizeString(headers[i]);
-            if (h.includes(ventaColName)) ventaIdx = i;
-            if (h.includes(varColName)) varIdx = i;
-        }
-        if (ventaIdx === -1 || varIdx === -1) {
-            alert(`No se encontraron las columnas requeridas (${isPeriodo ? 'Venta periodo Act.' : 'Venta trimestre Act.'} o la de variación).`);
-            return null;
-        }
-        
-        let items = [];
-        for (let i = 0; i < rowsData.length; i++) {
-            let rawVenta = rowsData[i][ventaIdx];
-            let ventaNum = parseFloat(String(rawVenta).replace(/[^0-9.-]/g, ''));
-            if (isNaN(ventaNum)) continue;
-            let rawVar = rowsData[i][varIdx];
-            let varNum = parsePercentageValue(rawVar);
-            if (isNaN(varNum)) continue;
-            let label = (headers[0] && ventaIdx !== 0) ? String(rowsData[i][0] || `Fila ${i+1}`) : `Fila ${i+1}`;
-            items.push({ label, venta: ventaNum, variacion: varNum });
-        }
-        
-        items.sort((a, b) => b.venta - a.venta);
-        const top40 = items.slice(0, 40);
-        let negativos = top40.filter(item => item.variacion < 0);
-        negativos.sort((a, b) => a.variacion - b.variacion);
-        const topNegativos = negativos.slice(0, 10);
-        
-        if (topNegativos.length === 0) {
-            alert(`No se encontraron valores negativos en la variación para mostrar.`);
-            return null;
-        }
-        
-        const labels = topNegativos.map(item => item.label);
-        const values = topNegativos.map(item => Math.abs(item.variacion));
-        const datasetLabel = isPeriodo ? "Periodo Act. vs Periodo Ant. (%)" : "Trimestre Act. vs Trimestre Ant. (%)";
-        return { labels, values, datasetLabel };
-    }
-
-    function showCedisCarteraVencidaChart(sheetName, headers, rowsData) {
-        let mayIdx = -1;
-        for (let i = 0; i < headers.length; i++) {
-            if (normalizeString(headers[i]) === 'may') {
-                mayIdx = i;
-                break;
-            }
-        }
-        if (mayIdx === -1) {
-            alert("No se encontró la columna 'May' en la hoja 'cedis cartera vencida'.");
-            return null;
-        }
-        
-        const maxRows = Math.min(rowsData.length, 15);
-        const labels = [];
-        const values = [];
-        for (let i = 0; i < maxRows; i++) {
-            let label = `Fila ${i+1}`;
-            if (headers[0] && mayIdx !== 0) {
-                let firstVal = rowsData[i][0];
-                if (firstVal !== undefined && firstVal !== "") label = String(firstVal).substring(0, 30);
-            }
-            let rawVal = rowsData[i][mayIdx];
-            let num = parseFloat(String(rawVal).replace(/[^0-9.-]/g, ''));
-            if (isNaN(num)) num = 0;
-            labels.push(label);
-            values.push(num);
-        }
-        return { labels, values, datasetLabel: headers[mayIdx] };
-    }
-
-    function showChartForSheet(sheetName, headers, rowsData, worksheet) {
-        const sheetLower = normalizeString(sheetName);
-        
-        if (sheetLower === 'dn' || sheetLower === 'resumen') {
-            const chartContainer = document.getElementById('chartContainer');
-            chartContainer.style.display = 'none';
-            if (currentChart) {
-                currentChart.destroy();
-                currentChart = null;
-            }
-            return;
-        }
-        
-        if (sheetLower === 'familias') {
-            if (familiasMode[sheetName] === undefined) familiasMode[sheetName] = 0;
-            const currentMode = familiasMode[sheetName];
-            const chartData = showFamiliesPieChart(sheetName, headers, rowsData, currentMode);
-            if (!chartData) return;
-            const { labels, values, datasetLabel } = chartData;
-            
-            const chartContainer = document.getElementById('chartContainer');
-            const chartTitle = document.getElementById('chartTitle');
-            const modeDisplay = (currentMode === 0) ? "Con Caída Periodo vs Periodo" : "Con Caída Trimestre vs Trimestre";
-            chartTitle.textContent = `Gráfico: ${sheetName} (${modeDisplay})`;
-            
-            familiasMode[sheetName] = (currentMode + 1) % 2;
-            
-            const isDark = document.body.classList.contains('dark-theme');
-            const textColor = isDark ? '#ffffff' : '#1e293b';
-            const backgroundColors = labels.map((_, i) => `hsl(${(i * 360 / labels.length) % 360}, 70%, 50%)`);
-            const legendFontSize = 10;
-            const tooltipFontSize = 9;
-            
-            const ctx = document.getElementById('barChart').getContext('2d');
-            if (currentChart) currentChart.destroy();
-            currentChart = new Chart(ctx, {
-                type: 'pie',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: datasetLabel,
-                        data: values,
-                        backgroundColor: backgroundColors,
-                        borderColor: isDark ? '#333' : '#fff',
-                        borderWidth: 1,
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: true,
-                    plugins: {
-                        legend: { position: 'right', labels: { color: textColor, font: { size: legendFontSize, weight: 'bold' } } },
-                        tooltip: { 
-                            callbacks: { label: (ctx) => `${ctx.label}: ${ctx.raw.toFixed(1)}%` },
-                            titleColor: textColor,
-                            bodyColor: textColor,
-                            backgroundColor: isDark ? '#333' : '#fff',
-                            titleFont: { size: tooltipFontSize },
-                            bodyFont: { size: tooltipFontSize }
-                        }
-                    }
-                }
-            });
-            chartContainer.style.display = 'block';
-            return;
-        }
-        
-        if (sheetLower === 'cedis cartera vencida') {
-            const chartData = showCedisCarteraVencidaChart(sheetName, headers, rowsData);
-            if (!chartData) return;
-            const { labels, values, datasetLabel } = chartData;
-            
-            const chartContainer = document.getElementById('chartContainer');
-            const chartTitle = document.getElementById('chartTitle');
-            chartTitle.textContent = `Gráfico: ${sheetName} - ${datasetLabel} (primeros 15)`;
-            
-            const isDark = document.body.classList.contains('dark-theme');
-            const barColor = isDark ? '#d32f2f' : '#2563eb';
-            const textColor = isDark ? '#ffffff' : '#1e293b';
-            const gridColor = isDark ? '#555' : '#ccc';
-            const legendFontSize = 10;
-            const tooltipFontSize = 9;
-            const yTickFont = 9;
-            const xTickFont = 8;
-            
-            const ctx = document.getElementById('barChart').getContext('2d');
-            if (currentChart) currentChart.destroy();
-            currentChart = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: datasetLabel,
-                        data: values,
-                        backgroundColor: barColor,
-                        borderColor: barColor,
-                        borderWidth: 1,
-                        borderRadius: 6,
-                        barPercentage: 0.5,
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: true,
-                    plugins: {
-                        legend: { labels: { color: textColor, font: { size: legendFontSize, weight: 'bold' } } },
-                        tooltip: { 
-                            callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.raw.toLocaleString('es-MX')}` },
-                            titleColor: textColor,
-                            bodyColor: textColor,
-                            backgroundColor: isDark ? '#333' : '#fff',
-                            borderColor: '#d32f2f',
-                            titleFont: { size: tooltipFontSize },
-                            bodyFont: { size: tooltipFontSize }
-                        }
-                    },
-                    scales: {
-                        y: { grid: { color: gridColor }, ticks: { color: textColor, font: { size: yTickFont } } },
-                        x: { ticks: { color: textColor, maxRotation: 45, minRotation: 45, font: { size: xTickFont } } }
-                    }
-                }
-            });
-            chartContainer.style.display = 'block';
-            return;
-        }
-        
-        const chartContainer = document.getElementById('chartContainer');
-        const chartTitle = document.getElementById('chartTitle');
-        chartTitle.textContent = `Gráfico: ${sheetName}`;
-
-        let labels = [];
-        let values = [];
-        let datasetLabel = '';
-        let barColors = [];
-
-        let effectiveRowsData = rowsData;
-        if (sheetLower === 'mes' || sheetLower === 'cedis mes' || sheetLower === 'trimestre' || sheetLower === 'cartera vencida') {
-            if (rowsData.length > 0) effectiveRowsData = rowsData.slice(0, -1);
-        }
-
-        if (sheetLower === 'mes') {
-            let valueColIndex = -1;
-            for (let i = 0; i < headers.length; i++) {
-                const lower = normalizeString(headers[i]);
-                if (lower.includes('cubrimiento') && lower.includes('cuota')) {
-                    valueColIndex = i;
-                    datasetLabel = headers[i];
-                    break;
-                }
-            }
-            if (valueColIndex === -1) {
-                alert("No se encontró la columna 'cubrimiento de cuota' en la hoja Mes.");
-                chartContainer.style.display = 'none';
-                return;
-            }
-            const dataPoints = [];
-            for (let i = 0; i < effectiveRowsData.length; i++) {
-                let label = `Fila ${i+1}`;
-                if (headers[0] && valueColIndex !== 0) {
-                    let firstVal = effectiveRowsData[i][0];
-                    if (firstVal !== undefined && firstVal !== "") label = String(firstVal).substring(0, 30);
-                }
-                let rawVal = effectiveRowsData[i][valueColIndex];
-                let percentVal = parseToPercentage(rawVal, 1);
-                let numeric = percentVal.numeric;
-                if (isNaN(numeric)) numeric = 0;
-                dataPoints.push({ label, value: numeric });
-            }
-            dataPoints.sort((a, b) => b.value - a.value);
-            labels = dataPoints.map(dp => dp.label);
-            values = dataPoints.map(dp => dp.value);
-            const isDark = document.body.classList.contains('dark-theme');
-            barColors = values.map(v => {
-                if (v >= 100) return isDark ? '#1e4d3a' : '#22c55e';
-                if (v >= 90) return isDark ? '#6b5a1a' : '#eab308';
-                return isDark ? '#5e2a2a' : '#ef4444';
-            });
-            datasetLabel = "Cubrimiento de cuota (%)";
-        }
-        else if (sheetLower === 'cartera vencida') {
-            let valueColIndex = -1;
-            for (let i = 0; i < headers.length; i++) {
-                if (normalizeString(headers[i]).includes('suma de % 15 dias')) {
-                    valueColIndex = i;
-                    datasetLabel = headers[i];
-                    break;
-                }
-            }
-            if (valueColIndex === -1) {
-                alert("No se encontró la columna 'Suma de % 15 dias'.");
-                chartContainer.style.display = 'none';
-                return;
-            }
-            const dataPoints = [];
-            for (let i = 0; i < effectiveRowsData.length; i++) {
-                let label = `Fila ${i+1}`;
-                if (headers[0] && valueColIndex !== 0) {
-                    let firstVal = effectiveRowsData[i][0];
-                    if (firstVal !== undefined && firstVal !== "") label = String(firstVal).substring(0, 30);
-                }
-                let rawVal = effectiveRowsData[i][valueColIndex];
-                let percentVal = parseToPercentage(rawVal, 2);
-                let numeric = percentVal.numeric;
-                if (isNaN(numeric)) numeric = 0;
-                dataPoints.push({ label, value: numeric });
-            }
-            dataPoints.sort((a, b) => b.value - a.value);
-            labels = dataPoints.map(dp => dp.label);
-            values = dataPoints.map(dp => dp.value);
-            const isDark = document.body.classList.contains('dark-theme');
-            barColors = dataPoints.map(dp => {
-                if (dp.value > 3.50) return isDark ? '#f59e0b' : '#eab308';
-                return isDark ? '#d32f2f' : '#2563eb';
-            });
-            datasetLabel = "Suma de % 15 dias (%)";
-        }
-        else if (sheetLower === 'semaforizacion gerente') {
-            let gerenteIdx = -1, promedioIdx = -1;
-            for (let i = 0; i < headers.length; i++) {
-                const h = normalizeString(headers[i]);
-                if (h === 'gerente') gerenteIdx = i;
-                if (h === 'promedio') promedioIdx = i;
-            }
-            if (gerenteIdx === -1 || promedioIdx === -1) {
-                alert("No se encontraron las columnas 'gerente' o 'promedio'.");
-                chartContainer.style.display = 'none';
-                return;
-            }
-            const dataPoints = [];
-            for (let i = 0; i < effectiveRowsData.length; i++) {
-                let gerente = String(effectiveRowsData[i][gerenteIdx] || `Fila ${i+1}`);
-                let promedioRaw = effectiveRowsData[i][promedioIdx];
-                let percentVal = parseToPercentage(promedioRaw, 0);
-                let numeric = percentVal.numeric;
-                if (isNaN(numeric)) numeric = 0;
-                dataPoints.push({ label: gerente, value: numeric });
-            }
-            dataPoints.sort((a, b) => b.value - a.value);
-            labels = dataPoints.map(dp => dp.label);
-            values = dataPoints.map(dp => dp.value);
-            const isDark = document.body.classList.contains('dark-theme');
-            barColors = dataPoints.map(dp => {
-                if (dp.value < 90) return isDark ? '#ef4444' : '#dc2626';
-                if (dp.value > 99) return isDark ? '#22c55e' : '#16a34a';
-                return isDark ? '#eab308' : '#ca8a04';
-            });
-            datasetLabel = "Promedio (%)";
-        }
-        else if (sheetLower === 'venta diaria' && worksheet) {
-            if (ventaDiariaMode[sheetName] === undefined) ventaDiariaMode[sheetName] = 0;
-            const currentMode = ventaDiariaMode[sheetName];
-            
-            if (currentMode === 0) {
-                const columns = ['A', 'B', 'C', 'D', 'E', 'F'];
-                for (let row = 2; row <= 18; row += 2) {
-                    for (let col of columns) {
-                        const xCellAddr = `${col}${row}`;
-                        const yCellAddr = `${col}${row + 1}`;
-                        const xCell = worksheet[xCellAddr];
-                        const yCell = worksheet[yCellAddr];
-                        if (xCell && xCell.v !== undefined && xCell.v !== null && 
-                            yCell && yCell.v !== undefined && yCell.v !== null) {
-                            let label = String(xCell.v).trim();
-                            if (label === "") label = `${col}${row}`;
-                            let yValue = parseFloat(yCell.v);
-                            if (!isNaN(yValue)) {
-                                labels.push(label);
-                                values.push(yValue);
-                            }
-                        }
-                    }
-                }
-                datasetLabel = "Valor (moneda)";
-                chartTitle.textContent = `Gráfico: ${sheetName} (Venta Diaria)`;
-                const isDark = document.body.classList.contains('dark-theme');
-                barColors = labels.map(() => isDark ? '#3b82f6' : '#2563eb');
-                
-                const ctx = document.getElementById('barChart').getContext('2d');
-                if (currentChart) currentChart.destroy();
-                currentChart = new Chart(ctx, {
-                    type: 'bar',
-                    data: {
-                        labels: labels,
-                        datasets: [{
-                            label: datasetLabel,
-                            data: values,
-                            backgroundColor: barColors,
-                            borderColor: barColors,
-                            borderWidth: 1,
-                            borderRadius: 6,
-                            barPercentage: 0.5,
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: true,
-                        plugins: {
-                            legend: { labels: { color: isDark ? '#ffffff' : '#1e293b', font: { size: 13, weight: 'bold' } } },
-                            tooltip: { 
-                                callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.raw.toLocaleString('es-MX')}` },
-                                titleColor: isDark ? '#ffffff' : '#1e293b',
-                                bodyColor: isDark ? '#ffffff' : '#1e293b',
-                                backgroundColor: isDark ? '#333' : '#fff',
-                                borderColor: '#d32f2f',
-                                titleFont: { size: 12 },
-                                bodyFont: { size: 12 }
-                            }
-                        },
-                        scales: {
-                            y: { grid: { color: isDark ? '#555' : '#ccc' }, ticks: { color: isDark ? '#ffffff' : '#1e293b', font: { size: 12 } } },
-                            x: { ticks: { color: isDark ? '#ffffff' : '#1e293b', maxRotation: 45, minRotation: 45, font: { size: 11 } } }
-                        }
-                    }
-                });
-                chartContainer.style.display = 'block';
-                return;
-            } else {
-                const dataPoints = [];
-                let maxRow = 1;
-                for (let row = 1; row <= 100; row++) {
-                    const cellAddr = `G${row}`;
-                    const cell = worksheet[cellAddr];
-                    if (cell && cell.v !== undefined && cell.v !== null && cell.v !== "") {
-                        maxRow = row;
-                    } else {
-                        break;
-                    }
-                }
-                for (let row = 1; row <= maxRow; row++) {
-                    const cellAddr = `G${row}`;
-                    const cell = worksheet[cellAddr];
-                    if (cell && cell.v !== undefined && cell.v !== null && cell.v !== "") {
-                        let yValue = parseFloat(cell.v);
-                        if (!isNaN(yValue)) {
-                            dataPoints.push({ x: row, y: yValue });
-                        }
-                    }
-                }
-                if (dataPoints.length === 0) {
-                    alert("No se encontraron datos en la columna G para la semana.");
-                    chartContainer.style.display = 'none';
-                    return;
-                }
-                const isDark = document.body.classList.contains('dark-theme');
-                const textColor = isDark ? '#ffffff' : '#1e293b';
-                const gridColor = isDark ? '#555' : '#ccc';
-                const lineColor = isDark ? '#3b82f6' : '#2563eb';
-                
-                const ctx = document.getElementById('barChart').getContext('2d');
-                if (currentChart) currentChart.destroy();
-                currentChart = new Chart(ctx, {
-                    type: 'scatter',
-                    data: {
-                        datasets: [{
-                            label: 'Venta por Semana (moneda)',
-                            data: dataPoints,
-                            backgroundColor: lineColor,
-                            borderColor: lineColor,
-                            borderWidth: 2,
-                            pointRadius: 5,
-                            pointBackgroundColor: lineColor,
-                            pointBorderColor: '#fff',
-                            pointBorderWidth: 1,
-                            showLine: true,
-                            fill: false,
-                            tension: 0,
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: true,
-                        plugins: {
-                            legend: { labels: { color: textColor, font: { size: 13, weight: 'bold' } } },
-                            tooltip: { 
-                                callbacks: { label: (ctx) => `Semana ${ctx.parsed.x}: ${ctx.parsed.y.toLocaleString('es-MX')}` },
-                                titleColor: textColor,
-                                bodyColor: textColor,
-                                backgroundColor: isDark ? '#333' : '#fff',
-                                borderColor: '#d32f2f',
-                                titleFont: { size: 12 },
-                                bodyFont: { size: 12 }
-                            }
-                        },
-                        scales: {
-                            x: {
-                                type: 'linear',
-                                title: { display: true, text: 'Semana', color: textColor, font: { size: 12 } },
-                                ticks: { color: textColor, stepSize: 1, font: { size: 11 } },
-                                grid: { color: gridColor }
-                            },
-                            y: {
-                                title: { display: true, text: 'Monto', color: textColor, font: { size: 12 } },
-                                ticks: { color: textColor, callback: (val) => val.toLocaleString('es-MX'), font: { size: 12 } },
-                                grid: { color: gridColor }
-                            }
-                        }
-                    }
-                });
-                chartTitle.textContent = `Gráfico: ${sheetName} (Venta Por Semana)`;
-                chartContainer.style.display = 'block';
-                return;
-            }
-        }
-        else if (sheetLower === 'cedis mes' || sheetLower === 'trimestre') {
-            let valueColIndex = -1;
-            for (let i = 0; i < headers.length; i++) {
-                const lower = normalizeString(headers[i]);
-                if (lower.includes('cubrimiento') && lower.includes('cuota')) {
-                    valueColIndex = i;
-                    datasetLabel = headers[i];
-                    break;
-                }
-            }
-            if (valueColIndex === -1) {
-                alert("No se encontró la columna 'cubrimiento de cuota'.");
-                chartContainer.style.display = 'none';
-                return;
-            }
-            const dataPoints = [];
-            for (let i = 0; i < effectiveRowsData.length; i++) {
-                let label = `Fila ${i+1}`;
-                if (headers[0] && valueColIndex !== 0) {
-                    let firstVal = effectiveRowsData[i][0];
-                    if (firstVal !== undefined && firstVal !== "") label = String(firstVal).substring(0, 30);
-                }
-                let rawVal = effectiveRowsData[i][valueColIndex];
-                let percentVal = parseToPercentage(rawVal, 1);
-                let numeric = percentVal.numeric;
-                if (isNaN(numeric)) numeric = 0;
-                dataPoints.push({ label, value: numeric });
-            }
-            dataPoints.sort((a, b) => b.value - a.value);
-            labels = dataPoints.map(dp => dp.label);
-            values = dataPoints.map(dp => dp.value);
-            const isDark = document.body.classList.contains('dark-theme');
-            barColors = values.map(v => {
-                if (v >= 100) return isDark ? '#1e4d3a' : '#22c55e';
-                if (v >= 90) return isDark ? '#6b5a1a' : '#eab308';
-                return isDark ? '#5e2a2a' : '#ef4444';
-            });
-            datasetLabel = "Cubrimiento de cuota (%)";
-        }
-        else {
-            let valueColIndex = -1;
-            for (let i = 0; i < headers.length; i++) {
-                const lower = normalizeString(headers[i]);
-                if (lower.includes('venta') || lower.includes('cuota') || lower.includes('estimado') || 
-                    lower.includes('cubrimiento') || lower.includes('%var') || lower === 'abr' || lower === 'feb' || lower === 'mzo') {
-                    valueColIndex = i;
-                    datasetLabel = headers[i];
-                    break;
-                }
-            }
-            if (valueColIndex === -1 && headers.length > 1) {
-                valueColIndex = 1;
-                datasetLabel = headers[1];
-            }
-            if (valueColIndex === -1) {
-                alert("No se encontró una columna numérica adecuada.");
-                chartContainer.style.display = 'none';
-                return;
-            }
-            const maxRows = Math.min(rowsData.length, 15);
-            for (let i = 0; i < maxRows; i++) {
-                let label = `Fila ${i+1}`;
-                if (headers[0] && valueColIndex !== 0) {
-                    let firstVal = rowsData[i][0];
-                    if (firstVal !== undefined && firstVal !== "") label = String(firstVal).substring(0, 20);
-                }
-                let rawVal = rowsData[i][valueColIndex];
-                let num = parseFloat(String(rawVal).replace(/[^0-9.-]/g, ''));
-                if (isNaN(num)) num = 0;
-                labels.push(label);
-                values.push(num);
-            }
-            const isDark = document.body.classList.contains('dark-theme');
-            barColors = labels.map(() => isDark ? '#d32f2f' : '#2563eb');
-        }
-
-        if (labels.length === 0) {
-            alert("No se encontraron datos válidos para generar el gráfico.");
-            chartContainer.style.display = 'none';
-            return;
-        }
-
-        const isDark = document.body.classList.contains('dark-theme');
-        const textColor = isDark ? '#ffffff' : '#1e293b';
-        const gridColor = isDark ? '#555' : '#ccc';
-
-        let legendFontSize = 13;
-        let tooltipTitleFont = 12;
-        let tooltipBodyFont = 12;
-        let yTickFont = 12;
-        let xTickFont = 11;
-
-        if (sheetLower === 'mes' || sheetLower === 'cedis cartera vencida') {
-            legendFontSize = 10;
-            tooltipTitleFont = 9;
-            tooltipBodyFont = 9;
-            yTickFont = 9;
-            xTickFont = 8;
-        }
-
-        const ctx = document.getElementById('barChart').getContext('2d');
-        if (currentChart) currentChart.destroy();
-        currentChart = new Chart(ctx, {
+        return {
             type: 'bar',
             data: {
-                labels: labels,
+                labels,
                 datasets: [{
                     label: datasetLabel,
                     data: values,
-                    backgroundColor: barColors,
-                    borderColor: barColors,
-                    borderWidth: 1,
-                    borderRadius: 6,
-                    barPercentage: 0.5,
+                    backgroundColor: colors,
+                    borderColor: colors,
+                    borderWidth: 0,
+                    borderRadius: 7,
+                    borderSkipped: false,
+                    barPercentage: 0.55,
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: true,
+                animation: {
+                    duration: 700,
+                    easing: 'easeOutQuart',
+                },
                 plugins: {
-                    legend: { labels: { color: textColor, font: { size: legendFontSize, weight: 'bold' } } },
-                    tooltip: { 
-                        callbacks: { 
-                            label: (ctx) => {
-                                let suffix = '';
-                                if (sheetLower === 'cedis mes' || sheetLower === 'trimestre' || sheetLower === 'cartera vencida' || sheetLower === 'semaforizacion gerente' || sheetLower === 'mes')
-                                    suffix = '%';
-                                return `${ctx.dataset.label}: ${ctx.raw.toLocaleString('es-MX')}${suffix}`;
-                            }
+                    legend: {
+                        labels: {
+                            color: c.text,
+                            font: { size: fs.legend, weight: '600', family: 'DM Sans' },
+                            boxWidth: 12,
+                            padding: 10,
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => ` ${ctx.dataset.label}: ${ctx.raw.toLocaleString('es-MX')}`,
                         },
-                        titleColor: textColor,
-                        bodyColor: textColor,
-                        backgroundColor: isDark ? '#333' : '#fff',
-                        borderColor: '#d32f2f',
-                        titleFont: { size: tooltipTitleFont },
-                        bodyFont: { size: tooltipBodyFont }
+                        titleColor: c.text,
+                        bodyColor:  c.text,
+                        backgroundColor: c.tooltip,
+                        borderColor: c.accent,
+                        borderWidth: 1,
+                        cornerRadius: 8,
+                        padding: 8,
+                        titleFont: { size: fs.tooltip, family: 'Space Mono' },
+                        bodyFont:  { size: fs.tooltip, family: 'DM Sans' },
+                    },
+                    /* Deshabilitar explícitamente el centerCounterPlugin en barras */
+                    centerCounterPlugin: false,
+                },
+                scales: {
+                    y: {
+                        grid:  { color: c.grid },
+                        ticks: { color: c.text, font: { size: fs.y, family: 'Space Mono' } }
+                    },
+                    x: {
+                        grid:  { display: false },
+                        ticks: { color: c.text, maxRotation: 45, minRotation: 45, font: { size: fs.x, family: 'DM Sans' } }
+                    }
+                }
+            }
+        };
+    }
+
+    /** Gráfica de dispersión con efecto "Draw SVG" (Chart.js 4 compatible) */
+    function buildScatterConfig(dataPoints, label) {
+        const c = getThemeColors();
+
+        /* Inicializar estado global del scatter */
+        _scatterState.progress    = 0;
+        _scatterState.accentColor = c.accent;
+        _scatterState.bgColor     = getComputedStyle(document.documentElement)
+            .getPropertyValue('--bg-card').trim() || '#0f1520';
+
+        return {
+            type: 'scatter',
+            data: {
+                datasets: [{
+                    label,
+                    data: dataPoints,
+                    backgroundColor: c.accent,
+                    borderColor: c.accent,
+                    borderWidth: 2.5,
+                    pointRadius: 5,
+                    pointHoverRadius: 7,
+                    pointHoverBackgroundColor: c.accent,
+                    pointHoverBorderColor: '#ffffff',
+                    pointHoverBorderWidth: 2,
+                    showLine: true,
+                    fill: false,
+                    tension: 0,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                animation: {
+                    duration: 0,   /* La animación la hace requestAnimationFrame */
+                },
+                plugins: {
+                    legend: {
+                        labels: {
+                            color: c.text,
+                            font: { size: 11, weight: '600', family: 'DM Sans' },
+                        }
+                    },
+                    tooltip: {
+                        callbacks: { label: ctx => ` Semana ${ctx.parsed.x}: ${ctx.parsed.y.toLocaleString('es-MX')}` },
+                        titleColor: c.text,
+                        bodyColor:  c.text,
+                        backgroundColor: c.tooltip,
+                        borderColor: c.accent,
+                        borderWidth: 1,
+                        cornerRadius: 8,
+                        padding: 8,
                     }
                 },
                 scales: {
-                    y: { grid: { color: gridColor }, ticks: { color: textColor, font: { size: yTickFont } } },
-                    x: { ticks: { color: textColor, maxRotation: 45, minRotation: 45, font: { size: xTickFont } } }
+                    x: {
+                        type: 'linear',
+                        title: { display: true, text: 'Semana', color: c.text, font: { size: 10 } },
+                        ticks: { color: c.text, stepSize: 1, font: { size: 9, family: 'Space Mono' } },
+                        grid:  { color: c.grid }
+                    },
+                    y: {
+                        title: { display: true, text: 'Monto', color: c.text, font: { size: 10 } },
+                        ticks: { color: c.text, callback: v => v.toLocaleString('es-MX'), font: { size: 9, family: 'Space Mono' } },
+                        grid:  { color: c.grid }
+                    }
                 }
             }
-        });
-        chartContainer.style.display = 'block';
+            /* drawSVGGlobalPlugin está registrado globalmente — sin plugins:[] inline */
+        };
     }
 
-    // ========== EXPORTACIÓN Y UTILIDADES ==========
+    /** Gráfica de dona con animación + contador central (Chart.js 4 compatible) */
+    function buildDoughnutConfig(labels, values, backgroundColors, datasetLabel) {
+        const c = getThemeColors();
+        const total = values.reduce((a, b) => a + b, 0);
+
+        /* Inicializar estado global del contador */
+        _donutState.progress = 0;
+        _donutState.total    = total;
+        _donutState.text     = c.text;
+
+        return {
+            type: 'doughnut',
+            data: {
+                labels,
+                datasets: [{
+                    label: datasetLabel,
+                    data: values,
+                    backgroundColor: backgroundColors,
+                    borderColor: c.tooltip,
+                    borderWidth: 2,
+                    hoverBorderWidth: 3,
+                    hoverBorderColor: c.accent,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                cutout: '62%',
+                rotation: -90,
+                circumference: 360,
+                animation: {
+                    animateRotate: true,
+                    animateScale: false,
+                    duration: 900,
+                    easing: 'easeOutQuart',
+                    onProgress(anim) {
+                        _donutState.progress = anim.currentStep / anim.numSteps;
+                    },
+                    onComplete() {
+                        _donutState.progress = 1;
+                    },
+                },
+                plugins: {
+                    legend: {
+                        position: 'right',
+                        labels: {
+                            color: c.text,
+                            font:  { size: 9, weight: '600', family: 'DM Sans' },
+                            boxWidth: 10,
+                            padding: 6,
+                        }
+                    },
+                    tooltip: {
+                        callbacks: { label: ctx => ` ${ctx.label}: ${ctx.raw.toFixed(1)}%` },
+                        titleColor: c.text,
+                        bodyColor:  c.text,
+                        backgroundColor: c.tooltip,
+                        borderColor: c.accent,
+                        borderWidth: 1,
+                        cornerRadius: 8,
+                        padding: 8,
+                        titleFont: { size: 9,  family: 'Space Mono' },
+                        bodyFont:  { size: 10, family: 'DM Sans' },
+                    },
+                    /* Deshabilitar el plugin del scatter en la dona */
+                    drawSVGGlobalPlugin: false,
+                }
+            }
+            /* Sin plugins:[] inline — centerCounterPlugin está registrado globalmente */
+        };
+    }
+
+    /* ══════════════════════════════════════════════════════
+       CHART ORCHESTRATOR
+    ══════════════════════════════════════════════════════ */
+    function renderChart(config) {
+        const container  = document.getElementById('chartContainer');
+        const ctx        = document.getElementById('barChart').getContext('2d');
+        if (currentChart) { currentChart.destroy(); currentChart = null; }
+        currentChart = new Chart(ctx, config);
+        container.style.display = 'block';
+    }
+
+    function showChartForSheet(sheetName, headers, rowsData, worksheet) {
+        const sl = normalizeString(sheetName);
+        const container = document.getElementById('chartContainer');
+
+        /* Hojas sin gráfica */
+        if (sl === 'dn' || sl === 'resumen') {
+            container.style.display = 'none';
+            if (currentChart) { currentChart.destroy(); currentChart = null; }
+            return;
+        }
+
+        const titleEl = document.getElementById('chartTitle');
+        const c       = getThemeColors();
+
+        /* ── FAMILIAS → Dona animada ── */
+        if (sl === 'familias') {
+            if (familiasMode[sheetName] === undefined) familiasMode[sheetName] = 0;
+            const mode    = familiasMode[sheetName];
+            const chartData = showFamiliesPieChart(sheetName, headers, rowsData, mode);
+            if (!chartData) return;
+            const { labels, values, datasetLabel } = chartData;
+            familiasMode[sheetName] = (mode + 1) % 2;
+            const modeLabel = mode === 0 ? "Caída Periodo vs Periodo" : "Caída Trimestre vs Trimestre";
+            titleEl.textContent = `Gráfico: ${sheetName} (${modeLabel})`;
+            const bgColors = labels.map((_, i) => `hsl(${Math.round(i * 360 / labels.length)}, 70%, 55%)`);
+            renderChart(buildDoughnutConfig(labels, values, bgColors, datasetLabel));
+            return;
+        }
+
+        /* ── CEDIS CARTERA VENCIDA ── */
+        if (sl === 'cedis cartera vencida') {
+            const chartData = showCedisCarteraVencidaChart(sheetName, headers, rowsData);
+            if (!chartData) return;
+            const { labels, values, datasetLabel } = chartData;
+            titleEl.textContent = `Gráfico: ${sheetName}`;
+            const barColors = labels.map(() => c.accent);
+            renderChart(buildBarConfig(labels, values, barColors, datasetLabel, true));
+            return;
+        }
+
+        /* ── VENTA DIARIA ── */
+        if (sl === 'venta diaria' && worksheet) {
+            if (ventaDiariaMode[sheetName] === undefined) ventaDiariaMode[sheetName] = 0;
+            const mode = ventaDiariaMode[sheetName];
+
+            if (mode === 0) {
+                /* Barras */
+                const cols = ['A','B','C','D','E','F'];
+                const labels = [], values = [];
+                for (let row = 2; row <= 18; row += 2) {
+                    for (const col of cols) {
+                        const xC = worksheet[`${col}${row}`];
+                        const yC = worksheet[`${col}${row+1}`];
+                        if (xC?.v != null && yC?.v != null) {
+                            const label = String(xC.v).trim() || `${col}${row}`;
+                            const yVal  = parseFloat(yC.v);
+                            if (!isNaN(yVal)) { labels.push(label); values.push(yVal); }
+                        }
+                    }
+                }
+                titleEl.textContent = `Gráfico: ${sheetName} (Venta Diaria)`;
+                renderChart(buildBarConfig(labels, values, labels.map(() => c.accent), "Valor (moneda)"));
+            } else {
+                /* Dispersión con Draw SVG */
+                const dataPoints = [];
+                let maxRow = 1;
+                for (let row = 1; row <= 100; row++) {
+                    const cell = worksheet[`G${row}`];
+                    if (cell?.v != null && cell.v !== "") maxRow = row;
+                    else break;
+                }
+                for (let row = 1; row <= maxRow; row++) {
+                    const cell = worksheet[`G${row}`];
+                    if (cell?.v != null && cell.v !== "") {
+                        const yVal = parseFloat(cell.v);
+                        if (!isNaN(yVal)) dataPoints.push({ x: row, y: yVal });
+                    }
+                }
+                if (!dataPoints.length) { showToast("Sin datos en columna G.", 'error'); container.style.display = 'none'; return; }
+                titleEl.textContent = `Gráfico: ${sheetName} (Venta Por Semana)`;
+                renderChart(buildScatterConfig(dataPoints, 'Venta por Semana'));
+
+                /* Animar la línea con requestAnimationFrame usando estado global */
+                let start = null;
+                const duration = 1000;
+                const chart = currentChart;
+                function animate(ts) {
+                    if (!start) start = ts;
+                    const progress = Math.min((ts - start) / duration, 1);
+                    _scatterState.progress = progress;
+                    chart.draw();
+                    if (progress < 1) requestAnimationFrame(animate);
+                    else _scatterState.progress = 1;
+                }
+                requestAnimationFrame(animate);
+            }
+            return;
+        }
+
+        /* ── HOJAS ESTÁNDAR ── */
+        titleEl.textContent = `Gráfico: ${sheetName}`;
+        let labels = [], values = [], barColors = [], datasetLabel = '';
+
+        let effectiveRows = rowsData;
+        if (['mes','cedis mes','trimestre','cartera vencida'].includes(sl) && rowsData.length > 0)
+            effectiveRows = rowsData.slice(0, -1);
+
+        if (sl === 'mes') {
+            const colIdx = headers.findIndex(h => normalizeString(h).includes('cubrimiento') && normalizeString(h).includes('cuota'));
+            if (colIdx === -1) { showToast("No se encontró columna de cubrimiento.", 'error'); return; }
+            const pts = effectiveRows.map(r => {
+                const lbl = headers[0] && colIdx !== 0 && r[0] !== "" ? String(r[0]).substring(0, 30) : 'Fila';
+                const n   = parseToPercentage(r[colIdx], 1).numeric;
+                return { label: lbl, value: isNaN(n) ? 0 : n };
+            }).sort((a, b) => b.value - a.value);
+            labels = pts.map(p => p.label); values = pts.map(p => p.value);
+            barColors = values.map(v => v >= 100 ? c.greenBg : v >= 90 ? c.yellowBg : c.redBg);
+            datasetLabel = "Cubrimiento de cuota (%)";
+
+        } else if (sl === 'cartera vencida') {
+            const colIdx = headers.findIndex(h => normalizeString(h).includes('suma de % 15 dias'));
+            if (colIdx === -1) { showToast("No se encontró columna 'Suma de % 15 dias'.", 'error'); return; }
+            const pts = effectiveRows.map(r => {
+                const lbl = headers[0] && colIdx !== 0 && r[0] !== "" ? String(r[0]).substring(0, 30) : 'Fila';
+                const n   = parseToPercentage(r[colIdx], 2).numeric;
+                return { label: lbl, value: isNaN(n) ? 0 : n };
+            }).sort((a, b) => b.value - a.value);
+            labels = pts.map(p => p.label); values = pts.map(p => p.value);
+            barColors = values.map(v => v > 3.50 ? c.yellowBg : c.accent);
+            datasetLabel = "Suma de % 15 dias (%)";
+
+        } else if (sl === 'semaforizacion gerente') {
+            const gIdx = headers.findIndex(h => normalizeString(h) === 'gerente');
+            const pIdx = headers.findIndex(h => normalizeString(h) === 'promedio');
+            if (gIdx === -1 || pIdx === -1) { showToast("No se encontraron columnas gerente/promedio.", 'error'); return; }
+            /* Excel guarda 100% como 1.0 — siempre × 100 */
+            const parseExcelPct = v => {
+                if (v === null || v === undefined || v === '') return 0;
+                if (typeof v === 'number') return Math.round(v * 100);
+                const s = String(v).trim().replace('%', '');
+                const p = parseFloat(s);
+                if (isNaN(p)) return 0;
+                return Math.abs(p) > 1 ? Math.round(p) : Math.round(p * 100);
+            };
+            const pts = effectiveRows.map(r => {
+                const lbl = String(r[gIdx] || 'Gerente');
+                const n   = parseExcelPct(r[pIdx]);
+                return { label: lbl, value: n };
+            }).sort((a, b) => b.value - a.value);
+            labels = pts.map(p => p.label); values = pts.map(p => p.value);
+            barColors = values.map(v => v < 90 ? c.redBg : v > 99 ? c.greenBg : c.yellowBg);
+            datasetLabel = "Promedio (%)";
+
+        } else if (sl === 'cedis mes' || sl === 'trimestre') {
+            const colIdx = headers.findIndex(h => normalizeString(h).includes('cubrimiento') && normalizeString(h).includes('cuota'));
+            if (colIdx === -1) { showToast("No se encontró columna de cubrimiento.", 'error'); return; }
+            const pts = effectiveRows.map(r => {
+                const lbl = headers[0] && colIdx !== 0 && r[0] !== "" ? String(r[0]).substring(0, 30) : 'Fila';
+                const n   = parseToPercentage(r[colIdx], 1).numeric;
+                return { label: lbl, value: isNaN(n) ? 0 : n };
+            }).sort((a, b) => b.value - a.value);
+            labels = pts.map(p => p.label); values = pts.map(p => p.value);
+            barColors = values.map(v => v >= 100 ? c.greenBg : v >= 90 ? c.yellowBg : c.redBg);
+            datasetLabel = headers.find(h => normalizeString(h).includes('cubrimiento')) || "Cubrimiento";
+
+        } else {
+            /* Hoja genérica */
+            const TARGET_KEYWORDS = ['venta','cuota','estimado','cubrimiento','%var','abr','feb','mzo'];
+            let colIdx = headers.findIndex(h => TARGET_KEYWORDS.some(kw => normalizeString(h).includes(kw)));
+            if (colIdx === -1 && headers.length > 1) colIdx = 1;
+            if (colIdx === -1) { showToast("Sin columna numérica válida.", 'error'); return; }
+            const maxR = Math.min(rowsData.length, 15);
+            for (let i = 0; i < maxR; i++) {
+                const lbl = headers[0] && colIdx !== 0 && rowsData[i][0] !== "" ? String(rowsData[i][0]).substring(0, 20) : `Fila ${i+1}`;
+                const n   = parseFloat(String(rowsData[i][colIdx]).replace(/[^0-9.-]/g, ''));
+                labels.push(lbl); values.push(isNaN(n) ? 0 : n);
+            }
+            barColors = labels.map(() => c.accent);
+            datasetLabel = headers[colIdx] || "Valor";
+        }
+
+        if (!labels.length) { showToast("Sin datos válidos para la gráfica.", 'error'); return; }
+
+        /* Usar colores sólidos con gradiente en barras */
+        const solidColors = barColors.map(bg => {
+            if (!bg || bg === c.accent) return c.accent;
+            if (bg === c.greenBg)  return c.green;
+            if (bg === c.yellowBg) return c.yellow;
+            if (bg === c.redBg)    return c.red;
+            return bg;
+        });
+
+        const small = sl === 'mes' || sl === 'cedis cartera vencida';
+        renderChart(buildBarConfig(labels, values, solidColors, datasetLabel, small));
+    }
+
+    /* ══════════════════════════════════════════════════════
+       CHART HELPERS
+    ══════════════════════════════════════════════════════ */
+    function showFamiliesPieChart(sheetName, headers, rowsData, mode) {
+        const isPeriodo   = mode === 0;
+        const ventaCol    = isPeriodo ? 'venta periodo act.' : 'venta trimestre act.';
+        const varCol      = isPeriodo ? 'periodo act. vs periodo ant.' : 'trimestre act. vs trimestre ant.';
+        const ventaIdx    = headers.findIndex(h => normalizeString(h).includes(ventaCol));
+        const varIdx      = headers.findIndex(h => normalizeString(h).includes(varCol));
+        if (ventaIdx === -1 || varIdx === -1) { showToast("Columnas de familias no encontradas.", 'error'); return null; }
+
+        const items = [];
+        rowsData.forEach((r, i) => {
+            const ventaNum = parseFloat(String(r[ventaIdx]).replace(/[^0-9.-]/g, ''));
+            if (isNaN(ventaNum)) return;
+            const varNum = parsePercentageValue(r[varIdx]);
+            if (isNaN(varNum)) return;
+            const label = headers[0] && ventaIdx !== 0 ? String(r[0] || `Fila ${i+1}`) : `Fila ${i+1}`;
+            items.push({ label, venta: ventaNum, variacion: varNum });
+        });
+
+        items.sort((a, b) => b.venta - a.venta);
+        const negativos = items.slice(0, 40).filter(it => it.variacion < 0).sort((a, b) => a.variacion - b.variacion).slice(0, 10);
+        if (!negativos.length) { showToast("Sin valores negativos para mostrar.", 'error'); return null; }
+
+        return {
+            labels:       negativos.map(it => it.label),
+            values:       negativos.map(it => Math.abs(it.variacion)),
+            datasetLabel: isPeriodo ? "Periodo Act. vs Periodo Ant. (%)" : "Trimestre Act. vs Trimestre Ant. (%)",
+        };
+    }
+
+    function showCedisCarteraVencidaChart(sheetName, headers, rowsData) {
+        const mayIdx = headers.findIndex(h => normalizeString(h) === 'may');
+        if (mayIdx === -1) { showToast("No se encontró columna 'May'.", 'error'); return null; }
+        const maxRows = Math.min(rowsData.length, 15);
+        const labels = [], values = [];
+        for (let i = 0; i < maxRows; i++) {
+            const label = headers[0] && mayIdx !== 0 && rowsData[i][0] !== "" ? String(rowsData[i][0]).substring(0, 30) : `Fila ${i+1}`;
+            const num   = parseFloat(String(rowsData[i][mayIdx]).replace(/[^0-9.-]/g, ''));
+            labels.push(label); values.push(isNaN(num) ? 0 : num);
+        }
+        return { labels, values, datasetLabel: headers[mayIdx] };
+    }
+
+    /* ══════════════════════════════════════════════════════
+       EXPORTACIÓN
+    ══════════════════════════════════════════════════════ */
     function exportSingleSheetToExcel(sheetName) {
         const sheet = currentSheetsData.find(s => s.sheetName === sheetName);
         if (!sheet) return;
-        const { headers, rowsData } = sheet;
-        const sheetData = [headers, ...rowsData];
-        const ws = XLSX.utils.aoa_to_sheet(sheetData);
+        const ws = XLSX.utils.aoa_to_sheet([sheet.headers, ...sheet.rowsData]);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, sheetName.substring(0, 31));
         XLSX.writeFile(wb, `${sheetName.replace(/[\\/:*?"<>|]/g, '_')}.xlsx`);
+        showToast(`Hoja "${sheetName}" exportada`, 'success');
     }
 
     function exportAllSheetsToExcel() {
-        if (!currentSheetsData.length) {
-            alert("No hay datos para exportar. Primero cargue un archivo.");
-            return;
-        }
+        if (!currentSheetsData.length) { showToast("Sin datos para exportar. Cargue un archivo primero.", 'error'); return; }
         const wb = XLSX.utils.book_new();
-        currentSheetsData.forEach(sheet => {
-            const { sheetName, headers, rowsData } = sheet;
-            const sheetData = [headers, ...rowsData];
-            const ws = XLSX.utils.aoa_to_sheet(sheetData);
+        currentSheetsData.forEach(({ sheetName, headers, rowsData }) => {
+            const ws = XLSX.utils.aoa_to_sheet([headers, ...rowsData]);
             XLSX.utils.book_append_sheet(wb, ws, sheetName.substring(0, 31));
         });
-        XLSX.writeFile(wb, `GAFI_export_${new Date().toISOString().slice(0,19)}.xlsx`);
+        XLSX.writeFile(wb, `GAFI_export_${new Date().toISOString().slice(0, 19)}.xlsx`);
+        showToast("Exportación completa", 'success');
     }
 
     function showEmptyState(message) {
         const viewport = document.getElementById('sheetsViewport');
-        viewport.innerHTML = `<div class="empty-state"><i class="fas fa-file-excel"></i><h3>${escapeHtml(message)}</h3><p>Seleccione un archivo Excel válido.</p></div>`;
-    }
-
-    function escapeHtml(str) {
-        if (!str) return '';
-        return str.replace(/[&<>]/g, function(m) {
-            if (m === '&') return '&amp;';
-            if (m === '<') return '&lt;';
-            if (m === '>') return '&gt;';
-            return m;
-        });
-    }
-    function escapeId(str) {
-        return str.replace(/[^a-z0-9]/gi, '_');
+        viewport.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-icon-wrap"><i class="fas fa-file-excel"></i></div>
+                <h3>${escapeHtml(message)}</h3>
+                <p>Seleccione un archivo Excel válido (.xlsx / .xls).</p>
+            </div>`;
     }
 });
