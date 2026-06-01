@@ -843,9 +843,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 scales: {
                     x: {
                         type: 'linear',
+                        min: 1,
                         title: { display: true, text: 'Semana', color: c.text, font: { size: 10 } },
-                        ticks: { color: c.text, stepSize: 1, font: { size: 9, family: 'Space Mono' } },
-                        grid:  { color: c.grid }
+                        ticks: {
+                            color: c.text,
+                            stepSize: 1,
+                            precision: 0,
+                            font: { size: 9, family: 'Space Mono' }
+                        },
+                        grid: { color: c.grid }
                     },
                     y: {
                         title: { display: true, text: 'Monto', color: c.text, font: { size: 10 } },
@@ -1006,17 +1012,14 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 /* Dispersión con Draw SVG */
                 const dataPoints = [];
-                let maxRow = 1;
+                let semana = 1;   /* contador secuencial: 1, 2, 3... */
                 for (let row = 1; row <= 100; row++) {
                     const cell = worksheet[`G${row}`];
-                    if (cell?.v != null && cell.v !== "") maxRow = row;
-                    else break;
-                }
-                for (let row = 1; row <= maxRow; row++) {
-                    const cell = worksheet[`G${row}`];
-                    if (cell?.v != null && cell.v !== "") {
-                        const yVal = parseFloat(cell.v);
-                        if (!isNaN(yVal)) dataPoints.push({ x: row, y: yVal });
+                    if (cell?.v == null || cell.v === "") break;
+                    const yVal = parseFloat(cell.v);
+                    if (!isNaN(yVal)) {
+                        dataPoints.push({ x: semana, y: yVal });
+                        semana++;
                     }
                 }
                 if (!dataPoints.length) { showToast("Sin datos en columna G.", 'error'); container.style.display = 'none'; return; }
