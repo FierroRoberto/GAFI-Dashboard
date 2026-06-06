@@ -1040,7 +1040,54 @@ body.dark-theme .percentage-value { color: #fbbf24; }
     .resumen-mini-header { font-size: 0.82rem; padding: 0.4rem; }
 }
 
-/* ── REDUCED MOTION ── */
+/* ══════════════════════════════════════
+   PWA INSTALL BANNER
+══════════════════════════════════════ */
+.pwa-banner {
+    position: fixed;
+    bottom: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9998;
+    background: var(--bg-card);
+    border: 1px solid var(--accent-color);
+    border-radius: 14px;
+    padding: 0.6rem 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    box-shadow: var(--shadow-premium);
+    animation: slideUpBanner 0.3s var(--ease-out) both;
+    max-width: calc(100vw - 2rem);
+}
+
+@keyframes slideUpBanner {
+    from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.pwa-banner-content {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--text-primary);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.pwa-banner-icon {
+    color: var(--accent-color);
+    font-size: 1rem;
+}
+
+.pwa-banner-actions {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    flex-shrink: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
         animation-duration: 0.01ms !important;

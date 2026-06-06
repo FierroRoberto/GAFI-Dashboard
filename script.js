@@ -209,38 +209,227 @@ document.addEventListener('DOMContentLoaded', () => {
     fileInput.addEventListener('change', handleFileSelect);
     exportAllBtn.addEventListener('click', exportAllSheetsToExcel);
 
+    /* ══════════════════════════════════════════════════════
+       NORMALIZACIÓN DE PORCENTAJES — LÓGICA UNIVERSAL
+       ──────────────────────────────────────────────────────
+       Excel almacena porcentajes de 3 maneras distintas:
+
+         A) Formato PORCENTAJE (cell.t === 'n', cell.z contiene '%'):
+            Excel guarda internamente 0.11 y lo muestra como "11%".
+            → Multiplicamos × 100 → resultado: 11.
+
+         B) Formato NÚMERO DECIMAL (cell.t === 'n', sin '%' en z):
+            Valor puede ser 0.11 (→ 11%) o 11 (→ ya es porcentaje).
+            → Usamos heurística: si |v| ≤ 1.5 → es decimal → × 100.
+            → Si |v| > 1.5 → ya está en escala de porcentaje → directo.
+
+         C) Formato TEXTO (cell.t === 's'):
+            Puede ser "11%", "-11%", "0.11", "11".
+            → Extraemos número, detectamos '%' en string → si tiene '%'
+              y |v| ≤ 1.5 → × 100; si tiene '%' y |v| > 1.5 → directo;
+              sin '%' → aplicamos misma heurística que B.
+
+         La bandera `_isExcelPercent` se guarda EN EL PROPIO VALOR
+         como un objeto enriquecido { v, isPercent } para que las
+         funciones de display posteriores sepan que ese campo es %.
+    ══════════════════════════════════════════════════════ */
+
+    /* ══════════════════════════════════════════════════════
+       NORMALIZACIÓN DE PORCENTAJES — BASADA EN DATOS REALES
+       ──────────────────────────────────────────────────────
+       Tras inspeccionar los archivos Excel reales, se identificaron
+       EXACTAMENTE estos patrones de numFmt en SheetJS:
+
+       CASO A — Porcentaje decimal (valor 0.xx → mostrar XX%):
+         numFmt = '0%'        → valor 0.992 → mostrar 99%
+         numFmt = '0.0%'      → valor 107.3 → mostrar 107.3% ← OJO ver caso B
+         numFmt = '0.00%'     → valor 0.0639 → mostrar 6.39%
+         REGLA: numFmt termina en '%' SIN comillas antes → decimal → × 100
+
+       CASO B — Número ya en escala (valor XX → mostrar XX%):
+         numFmt = '0" %"'     → valor 121.3 → mostrar 121.3%
+         numFmt = '0.0" %"'   → valor 112.7 → mostrar 112.7%
+         REGLA: numFmt tiene '" %"' (% entre comillas) → ya en escala → directo
+
+       CASO C — Resumen con numFmt='0.0%' pero valor ya en escala (107.3):
+         La heurística: si numFmt termina en '%' Y |valor| > 1.5 → ya en escala.
+         Si numFmt termina en '%' Y |valor| ≤ 1.5 → decimal → × 100.
+
+       MANEJO DE NEGATIVOS: funciona automáticamente en todos los casos.
+    ══════════════════════════════════════════════════════ */
+
+    /**
+     * Analiza el numFmt de SheetJS y devuelve el tipo de porcentaje:
+     *   'quoted'  → numFmt tiene '" %"' → valor ya en escala 0–100
+     *   'decimal' → numFmt termina en '%' sin comillas → valor 0–1 → × 100
+     *   'none'    → no es porcentaje
+     */
+    function _detectPctFormat(cell) {
+        if (!cell) return 'none';
+
+        // SheetJS expone el numFmt en cell.z (format string de la celda)
+        const fmt = cell.z || cell.numFmt || '';
+
+        if (typeof fmt !== 'string' || fmt === '') {
+            // Sin formato → revisar si es texto con '%'
+            if (cell.t === 's' && typeof cell.v === 'string' && cell.v.includes('%')) {
+                return 'text';
+            }
+            return 'none';
+        }
+
+        // '0" %"' o '0.0" %"' → % entre comillas → valor YA en escala
+        if (fmt.includes('" %"') || fmt.includes("' %'")) return 'quoted';
+
+        // '0%', '0.0%', '0.00%' → % real de Excel → valor decimal 0–1
+        // Asegurarse que el % NO esté entre comillas
+        const stripped = fmt.replace(/"[^"]*"/g, '').replace(/'[^']*'/g, '');
+        if (stripped.includes('%')) return 'decimal';
+
+        // Tipo texto con símbolo %
+        if (cell.t === 's' && typeof cell.v === 'string' && cell.v.includes('%')) return 'text';
+
+        return 'none';
+    }
+
+    /**
+     * Normaliza una celda de SheetJS a { value, isPercent }.
+     * value siempre está en escala 0–100 si isPercent=true.
+     */
+    function normalizeCell(rawValue, cell) {
+        if (rawValue === null || rawValue === undefined || rawValue === '') {
+            return { value: '', isPercent: false };
+        }
+
+        const pctType = _detectPctFormat(cell);
+
+        if (pctType === 'none') {
+            return { value: rawValue, isPercent: false };
+        }
+
+        if (pctType === 'quoted') {
+            // Valor ya en escala: 121.3 → 121.3%
+            const n = typeof rawValue === 'number' ? rawValue : parseFloat(String(rawValue).replace('%',''));
+            return { value: isNaN(n) ? rawValue : n, isPercent: true };
+        }
+
+        if (pctType === 'decimal') {
+            // numFmt tiene '%' real (ej: '0%', '0.00%') → Excel SIEMPRE guarda decimal (0–1 o mayor si >100%)
+            // Multiplicamos × 100 siempre — no heurística, porque el formato lo confirma.
+            // EXCEPCIÓN: algunos campos de Resumen tienen numFmt='0.0%' pero valor ya en escala (107.3).
+            // Distinguimos: si el valor viene de sheet_to_json con raw:true Y |v|>2 → ya en escala.
+            // Umbral 2 (no 1.5) porque porcentajes > 200% son válidos en cubrimiento.
+            const n = typeof rawValue === 'number' ? rawValue : parseFloat(String(rawValue).replace('%',''));
+            if (isNaN(n)) return { value: rawValue, isPercent: false };
+            // Si |n| > 3 → probablemente ya en escala (ej: 107.3% cubrimiento en Resumen)
+            // Si |n| <= 3 → decimal de Excel (ej: 0.99=99%, 1.07=107%, 2.33=233%)
+            const finalVal = Math.abs(n) > 3 ? n : n * 100;
+            return { value: finalVal, isPercent: true };
+        }
+
+        if (pctType === 'text') {
+            // Texto como "11%" o "-11%"
+            const cleaned = String(rawValue).replace('%','').trim();
+            const n = parseFloat(cleaned);
+            if (isNaN(n)) return { value: rawValue, isPercent: false };
+            // Si el número ya está en escala 0–100 (|n|>1.5) usarlo directo
+            const finalVal = Math.abs(n) > 1.5 ? n : n * 100;
+            return { value: finalVal, isPercent: true };
+        }
+
+        return { value: rawValue, isPercent: false };
+    }
+
+    /**
+     * Construye el mapa de dirección celda → metadatos del worksheet.
+     * Clave: "col,row" (0-indexed). Valor: objeto celda SheetJS.
+     * Así se puede consultar la celda al procesar cada valor.
+     */
+    function _buildCellMap(worksheet) {
+        const map = {};
+        if (!worksheet) return map;
+        const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:A1');
+        for (let R = range.s.r; R <= range.e.r; R++) {
+            for (let C = range.s.c; C <= range.e.c; C++) {
+                const addr = XLSX.utils.encode_cell({ r: R, c: C });
+                if (worksheet[addr]) map[`${C},${R}`] = worksheet[addr];
+            }
+        }
+        return map;
+    }
+
     function handleFileSelect(event) {
-        const file = event.target.files[0];
+        const file = event.target.files?.[0];
         if (!file) return;
+
+        // Validar extensión
+        const ext = file.name.split('.').pop().toLowerCase();
+        if (!['xlsx','xls','xlsm','xlsb'].includes(ext)) {
+            showToast('Formato no soportado. Use .xlsx, .xls o .xlsm', 'error');
+            return;
+        }
+
         const reader = new FileReader();
         reader.onload = e => {
-            const data = new Uint8Array(e.target.result);
-            const workbook = XLSX.read(data, { type: 'array' });
-            const sheetsData = [];
+            try {
+                const data     = new Uint8Array(e.target.result);
+                // cellStyles:true → SheetJS preserva formatos de celda (z, numFmt)
+                const workbook = XLSX.read(data, { type: 'array', cellStyles: true, cellNF: true });
+                const sheetsData = [];
 
-            workbook.SheetNames.forEach(sheetName => {
-                const worksheet = workbook.Sheets[sheetName];
-                const jsonRows  = XLSX.utils.sheet_to_json(worksheet, { defval: "", header: 1 });
-                if (jsonRows.length === 0) {
-                    sheetsData.push({ sheetName, rowsData: [], headers: [], worksheet, rawRows: [] });
-                    return;
-                }
-                const headers  = jsonRows[0] || [];
-                const rowsData = jsonRows.slice(1).map(row => headers.map((_, i) => row[i] ?? ""));
-                sheetsData.push({ sheetName, rowsData, headers, worksheet, rawRows: jsonRows });
-            });
+                workbook.SheetNames.forEach(sheetName => {
+                    const worksheet = workbook.Sheets[sheetName];
+                    if (!worksheet || !worksheet['!ref']) {
+                        sheetsData.push({ sheetName, rowsData: [], headers: [], worksheet, rawRows: [], cellMap: {} });
+                        return;
+                    }
 
-            if (!sheetsData.length) { showEmptyState("El archivo no contiene hojas válidas."); return; }
+                    // Leer como raw (sin conversión automática de fechas ni porcentajes)
+                    const jsonRows = XLSX.utils.sheet_to_json(worksheet, {
+                        defval: '',
+                        header: 1,
+                        raw:    true,   // valores numéricos crudos (0.11 para 11%)
+                    });
 
-            currentSheetsData = sheetsData;
-            familiasMode = {};
-            ventaDiariaMode = {};
-            selectedSheetName = sheetsData[0].sheetName;
-            renderRadioButtons();
-            renderSelectedTable();
-            showToast(`Archivo cargado: ${sheetsData.length} hoja(s)`, 'success');
+                    if (jsonRows.length === 0) {
+                        sheetsData.push({ sheetName, rowsData: [], headers: [], worksheet, rawRows: [], cellMap: {} });
+                        return;
+                    }
+
+                    const cellMap  = _buildCellMap(worksheet);
+                    const headers  = (jsonRows[0] || []).map(h => h === null || h === undefined ? '' : String(h));
+
+                    const rowsData = jsonRows.slice(1).map((row, rIdx) =>
+                        headers.map((_, cIdx) => {
+                            const rawVal = row[cIdx] ?? '';
+                            const cell   = cellMap[`${cIdx},${rIdx + 1}`];
+                            const norm   = normalizeCell(rawVal, cell);
+                            if (!norm.isPercent) return rawVal;
+                            // Extraer número de decimales del numFmt para display fiel
+                            const fmt = (cell && (cell.z || cell.numFmt)) || '';
+                            const dec = fmt.includes('.00') ? 2 : fmt.includes('.0') ? 1 : 0;
+                            return { _pct: true, _val: norm.value, _raw: rawVal, _dec: dec };
+                        })
+                    );
+
+                    sheetsData.push({ sheetName, rowsData, headers, worksheet, rawRows: jsonRows, cellMap });
+                });
+
+                if (!sheetsData.length) { showEmptyState('El archivo no contiene hojas válidas.'); return; }
+
+                currentSheetsData = sheetsData;
+                familiasMode      = {};
+                ventaDiariaMode   = {};
+                selectedSheetName = sheetsData[0].sheetName;
+                renderRadioButtons();
+                renderSelectedTable();
+                showToast(`✓ ${sheetsData.length} hoja(s) cargadas`, 'success');
+            } catch (err) {
+                console.error('Error al parsear Excel:', err);
+                showToast('Error al leer el archivo Excel.', 'error');
+            }
         };
-        reader.onerror = () => showToast("Error al leer el archivo.", 'error');
+        reader.onerror = () => showToast('Error al acceder al archivo.', 'error');
         reader.readAsArrayBuffer(file);
     }
 
@@ -522,24 +711,57 @@ document.addEventListener('DOMContentLoaded', () => {
             const tr = document.createElement('tr');
             headers.forEach((header, idx) => {
                 const rawValue      = row[idx];
-                let   displayValue  = rawValue;
+                // Desempacar objeto enriquecido para determinar si es porcentaje
+                const isEnrichedPct = rawValue && typeof rawValue === 'object' && rawValue._pct === true;
+                const cellRaw       = isEnrichedPct ? rawValue._raw : rawValue;   // valor original del Excel
+                let   displayValue  = isEnrichedPct ? rawValue._val : rawValue;   // valor numérico normalizado
                 let   cellClass     = '';
                 const lh            = normalizeString(header);
                 const sl            = sheetLower;
 
-                if (sl === 'familias') {
-                    if (idx >= 1 && idx <= 4) { displayValue = formatCurrency(rawValue, true);              cellClass = 'currency-cell'; }
+                // Si la celda fue detectada como porcentaje por SheetJS y no hay
+                // regla específica por hoja, la mostramos como % de forma genérica.
+                if (isEnrichedPct && sl !== 'familias' && sl !== 'semaforizacion gerente'
+                    && sl !== 'semaforizacion' && sl !== 'dn' && sl !== 'cartera vencida'
+                    && sl !== 'cedis cartera vencida' && sl !== 'resumen') {
+                    const numPct = Number(rawValue._val);
+                    const dec    = rawValue._dec ?? 1;
+                    if (!isNaN(numPct)) {
+                        displayValue = numPct.toFixed(dec) + '%';
+                        cellClass = 'percentage-cell';
+                        if (lh.includes('cubr') || lh.includes('cump') || lh.includes('%')) {
+                            if (numPct >= 100)     cellClass += ' cell-green';
+                            else if (numPct >= 90) cellClass += ' cell-yellow';
+                            else                   cellClass += ' cell-red';
+                        }
+                    }
+                }
+
+                // ── DN: porcentajes en columnas C y D (enriquecidos o crudos)
+                if (sl === 'dn' && (lh.includes('% cub cuota venta') || lh.includes('% cub clientes'))) {
+                    const numPct = isEnrichedPct ? Math.round(Number(rawValue._val)) : Math.round(_resolveNumericPct(cellRaw));
+                    if (!isNaN(numPct)) {
+                        displayValue = numPct + '%';
+                        cellClass    = 'percentage-cell';
+                        if (thresholdDN !== null) {
+                            if (numPct < thresholdDN)      cellClass += ' cell-red';
+                            else if (numPct > thresholdDN) cellClass += ' cell-green';
+                            else                           cellClass += ' cell-yellow';
+                        }
+                    }
+                } else if (sl === 'familias') {
+                    if (idx >= 1 && idx <= 4) { displayValue = formatCurrency(cellRaw, true);              cellClass = 'currency-cell'; }
                     else if (idx === 5 || idx === 6) { displayValue = parseToPercentage(rawValue, 1).formatted; cellClass = 'percentage-cell'; }
                     if (lh.includes('periodo act. vs periodo ant.') || lh.includes('trimestre act. vs trimestre ant.')) {
                         const n = parsePercentageValue(rawValue);
                         if (!isNaN(n)) cellClass += n > 0 ? ' cell-green' : n < 0 ? ' cell-red' : '';
                     }
                 } else if (sl === 'cedis cartera vencida') {
-                    if (idx >= 1 && idx <= 3) { displayValue = formatCurrency(rawValue, true); cellClass = 'currency-cell'; }
+                    if (idx >= 1 && idx <= 3) { displayValue = formatCurrency(cellRaw, true); cellClass = 'currency-cell'; }
                 } else if (sl === 'venta diaria' && (rowIndex + 1) % 2 === 0) {
-                    displayValue = formatCurrency(rawValue, false); cellClass = 'currency-cell';
+                    displayValue = formatCurrency(cellRaw, false); cellClass = 'currency-cell';
                 } else if (sl === 'cartera vencida' && lh.includes('suma de > 15 dias')) {
-                    displayValue = formatCurrency(rawValue, true); cellClass = 'currency-cell';
+                    displayValue = formatCurrency(cellRaw, true); cellClass = 'currency-cell';
                 } else if (sl === 'cartera vencida' && lh.includes('suma de % 15 dias')) {
                     const p = parseToPercentage(rawValue, 2);
                     displayValue = p.formatted; cellClass = 'percentage-cell';
@@ -547,66 +769,54 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else if (sl === 'semaforizacion gerente') {
                     const pc = ['4to trim 2024','1er trim 2025','2do trim 2025','3er trim 2025','promedio'];
                     if (pc.some(c => lh.includes(c))) {
-                        /* Excel guarda 100% como 1.0 (decimal). Siempre multiplicar × 100. */
-                        const parseExcelPct = v => {
-                            if (v === null || v === undefined || v === '') return { formatted: '—', numeric: 0 };
-                            let num;
-                            if (typeof v === 'number') {
-                                num = v * 100;          /* 1.0 → 100, 0.95 → 95 */
-                            } else {
-                                const s = String(v).trim().replace('%', '');
-                                const parsed = parseFloat(s);
-                                if (isNaN(parsed)) return { formatted: String(v), numeric: 0 };
-                                /* Si viene como texto "100" (ya es %), usarlo directo */
-                                num = Math.abs(parsed) > 1 ? parsed : parsed * 100;
-                            }
-                            const rounded = Math.round(num);
-                            return { formatted: rounded + '%', numeric: rounded };
-                        };
-                        const p = parseExcelPct(rawValue);
-                        displayValue = p.formatted; cellClass = 'percentage-cell';
-                        if (p.numeric < 90)       cellClass += ' cell-red';
-                        else if (p.numeric > 99)  cellClass += ' cell-green';
-                        else                      cellClass += ' cell-yellow';
+                        // normalizeCell detecta numFmt='0%' → decimal → ×100
+                        // _dec=0 porque numFmt='0%' sin decimales → mostrar entero
+                        const rawNum  = isEnrichedPct ? Number(rawValue._val) : _resolveNumericPct(cellRaw);
+                        const dec     = isEnrichedPct ? (rawValue._dec ?? 0) : 0;
+                        const num     = dec === 0 ? Math.round(rawNum) : +(rawNum.toFixed(dec));
+                        if (!isNaN(num)) {
+                            displayValue = num + '%'; cellClass = 'percentage-cell';
+                            if (num < 90)      cellClass += ' cell-red';
+                            else if (num > 99) cellClass += ' cell-green';
+                            else               cellClass += ' cell-yellow';
+                        }
                     }
                 } else if (sl === 'semaforizacion') {
                     if (idx >= 2 && idx <= 6) {
                         const p = parseToPercentage(rawValue, 2);
                         displayValue = p.formatted; cellClass = 'percentage-cell';
-                        if (p.numeric >= 100) cellClass += ' cell-green';
+                        if (p.numeric >= 100)     cellClass += ' cell-green';
                         else if (p.numeric >= 90) cellClass += ' cell-yellow';
-                        else cellClass += ' cell-red';
+                        else                      cellClass += ' cell-red';
                     }
-                } else {
-                    const fmt = getFormatForCell(sheetName, lh, rawValue);
+                } else if (!isEnrichedPct) {
+                    // Solo aplicar getFormatForCell si no fue ya manejado como porcentaje
+                    const fmt = getFormatForCell(sheetName, lh, cellRaw);
                     if (fmt.formatted) displayValue = fmt.formatted;
                     if (fmt.isPercentage) cellClass = 'percentage-cell';
                     if (fmt.isCurrency)   cellClass = 'currency-cell';
 
-                    if (sl === 'dn' && thresholdDN !== null) {
-                        if (lh.includes('% cub cuota venta') || lh.includes('% cub clientes')) {
-                            const pv = parseToPercentage(rawValue, 2);
-                            if (pv.numeric < thresholdDN)      cellClass += ' cell-red';
-                            else if (pv.numeric > thresholdDN) cellClass += ' cell-green';
-                            else                               cellClass += ' cell-yellow';
-                        }
-                    }
                     if (sl === 'dn') {
                         if (lh.includes('venta faltante') || lh.includes('no. ctes que faltan p/cuota')) {
-                            const n = parseFloat(String(rawValue).replace(/[^0-9.-]/g, ''));
+                            const n = parseFloat(String(cellRaw).replace(/[^0-9.-]/g, ''));
                             if (!isNaN(n)) cellClass += n > 0 ? ' cell-green' : ' cell-red';
                         }
                     }
-                    if (lh.includes('cubrimiento') && lh.includes('cuota') && sl !== 'dn' && sl !== 'semaforizacion' && sl !== 'semaforizacion gerente' && sl !== 'familias' && sl !== 'cedis cartera vencida' && sl !== 'resumen') {
+                    if (lh.includes('cubrimiento') && lh.includes('cuota')
+                        && !['dn','semaforizacion','semaforizacion gerente','familias','cedis cartera vencida','resumen'].includes(sl)) {
                         const pv = parseToPercentage(rawValue, 1);
-                        if (pv.numeric < 90)       cellClass += ' cell-red';
+                        if (pv.numeric < 90)        cellClass += ' cell-red';
                         else if (pv.numeric > 99.9) cellClass += ' cell-green';
                         else                        cellClass += ' cell-yellow';
                     }
                 }
 
                 const td = document.createElement('td');
-                td.textContent = (displayValue !== undefined && displayValue !== "") ? displayValue : "—";
+                // displayValue puede ser objeto si no fue procesado — asegurar string
+                const finalDisplay = (displayValue !== undefined && displayValue !== '' && displayValue !== null)
+                    ? (typeof displayValue === 'object' ? JSON.stringify(displayValue) : String(displayValue))
+                    : '—';
+                td.textContent = finalDisplay;
                 if (cellClass) td.className = cellClass.trim();
                 td.style.textAlign = 'center';
                 tr.appendChild(td);
@@ -621,9 +831,10 @@ document.addEventListener('DOMContentLoaded', () => {
        FORMAT HELPERS
     ══════════════════════════════════════════════════════ */
     function formatCurrencyForResumen(value, integerMode = true) {
-        if (value === null || value === undefined || value === "") return "—";
-        const num = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
-        if (isNaN(num)) return value.toString();
+        const v = (value && typeof value === 'object' && '_pct' in value) ? value._raw : value;
+        if (v === null || v === undefined || v === "") return "—";
+        const num = parseFloat(String(v).replace(/[^0-9.-]/g, ''));
+        if (isNaN(num)) return String(v);
         const opts = integerMode
             ? { style: 'currency', currency: 'MXN', minimumFractionDigits: 0, maximumFractionDigits: 0 }
             : { style: 'currency', currency: 'MXN', minimumFractionDigits: 2, maximumFractionDigits: 2 };
@@ -631,35 +842,59 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function formatCurrency(value, integerMode = false) {
-        if (value === null || value === undefined || value === "") return "—";
-        const num = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
-        if (isNaN(num)) return String(value);
+        const v = (value && typeof value === 'object' && '_pct' in value) ? value._raw : value;
+        if (v === null || v === undefined || v === "") return "—";
+        const num = parseFloat(String(v).replace(/[^0-9.-]/g, ''));
+        if (isNaN(num)) return String(v);
         const opts = integerMode
             ? { style: 'currency', currency: 'MXN', minimumFractionDigits: 0, maximumFractionDigits: 0 }
             : { style: 'currency', currency: 'MXN', minimumFractionDigits: 2, maximumFractionDigits: 2 };
         return new Intl.NumberFormat('es-MX', opts).format(num);
     }
 
-    function parseToPercentage(value, decimals = 1) {
-        if (value === null || value === undefined || value === "") return { formatted: "—", numeric: 0 };
-        let num;
-        if (typeof value === 'number') num = Math.abs(value) >= 1 ? value : value * 100;
-        else {
-            const parsed = parseFloat(String(value).trim().replace('%', ''));
-            if (isNaN(parsed)) return { formatted: String(value), numeric: 0 };
-            num = Math.abs(parsed) >= 1 ? parsed : parsed * 100;
+    /**
+     * Extrae el valor numérico de un posible objeto enriquecido { _pct, _val }
+     * o de un valor primitivo. Devuelve número en escala 0–100 (o NaN).
+     * Usado por parseToPercentage y parsePercentageValue.
+     */
+    function _resolveNumericPct(value) {
+        if (value === null || value === undefined || value === '') return NaN;
+        // Objeto enriquecido por normalizeCell — ya en escala 0–100
+        if (value && typeof value === 'object' && value._pct) return Number(value._val);
+        // Número primitivo — aplicar heurística: >1.5 → ya en escala; ≤1.5 → decimal
+        if (typeof value === 'number') {
+            return Math.abs(value) > 1.5 ? value : value * 100;
         }
-        const rounded  = decimals === 0 ? Math.round(num) : Math.round(num * 10 ** decimals) / 10 ** decimals;
-        const formatted = rounded.toFixed(decimals) + "%";
-        return { formatted, numeric: rounded };
+        // String con o sin '%'
+        if (typeof value === 'string') {
+            const hasSymbol = value.includes('%');
+            const n = parseFloat(value.replace('%', '').trim());
+            if (isNaN(n)) return NaN;
+            if (hasSymbol) return Math.abs(n) > 1.5 ? n : n * 100;
+            return Math.abs(n) > 1.5 ? n : n * 100;
+        }
+        return NaN;
+    }
+
+    /** Devuelve el valor crudo de una celda (primitivo), quitando el wrapper si existe */
+    function _rawOf(value) {
+        if (value && typeof value === 'object' && '_pct' in value) return value._raw;
+        return value;
+    }
+
+    function parseToPercentage(value, decimals = 1) {
+        if (value === null || value === undefined || value === '') return { formatted: '—', numeric: 0 };
+        const num = _resolveNumericPct(value);
+        if (isNaN(num)) return { formatted: String(_rawOf(value)), numeric: 0 };
+        // Si el objeto enriquecido trae pista de decimales, usarla
+        const dec = (value && typeof value === 'object' && value._dec !== undefined) ? value._dec : decimals;
+        const factor  = 10 ** dec;
+        const rounded = Math.round(num * factor) / factor;
+        return { formatted: rounded.toFixed(dec) + '%', numeric: rounded };
     }
 
     function parsePercentageValue(value) {
-        if (value === null || value === undefined || value === "") return NaN;
-        if (typeof value === 'number') return Math.abs(value) >= 1 ? value : value * 100;
-        const parsed = parseFloat(String(value).trim().replace('%', ''));
-        if (isNaN(parsed)) return NaN;
-        return Math.abs(parsed) >= 1 ? parsed : parsed * 100;
+        return _resolveNumericPct(value);
     }
 
     function getFormatForCell(sheetName, colLower, rawValue) {
@@ -843,15 +1078,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 scales: {
                     x: {
                         type: 'linear',
-                        min: 1,
                         title: { display: true, text: 'Semana', color: c.text, font: { size: 10 } },
-                        ticks: {
-                            color: c.text,
-                            stepSize: 1,
-                            precision: 0,
-                            font: { size: 9, family: 'Space Mono' }
-                        },
-                        grid: { color: c.grid }
+                        ticks: { color: c.text, stepSize: 1, font: { size: 9, family: 'Space Mono' } },
+                        grid:  { color: c.grid }
                     },
                     y: {
                         title: { display: true, text: 'Monto', color: c.text, font: { size: 10 } },
@@ -1010,17 +1239,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 titleEl.textContent = `Gráfico: ${sheetName} (Venta Diaria)`;
                 renderChart(buildBarConfig(labels, values, labels.map(() => c.accent), "Valor (moneda)"));
             } else {
-                /* Dispersión con Draw SVG */
+                /* Dispersión con Draw SVG
+                   La col G alterna texto (header de semana) y número (total).
+                   Solo tomamos las celdas numéricas y les asignamos x=1,2,3... */
                 const dataPoints = [];
-                let semana = 1;   /* contador secuencial: 1, 2, 3... */
-                for (let row = 1; row <= 100; row++) {
+                let semana = 1;
+                for (let row = 1; row <= 200; row++) {
                     const cell = worksheet[`G${row}`];
-                    if (cell?.v == null || cell.v === "") break;
+                    if (!cell || cell.v == null || cell.v === '') break; // fin de datos
                     const yVal = parseFloat(cell.v);
-                    if (!isNaN(yVal)) {
+                    if (!isNaN(yVal)) {               // celda numérica → punto válido
                         dataPoints.push({ x: semana, y: yVal });
                         semana++;
                     }
+                    // celda de texto (header de semana) → la saltamos sin incrementar semana
                 }
                 if (!dataPoints.length) { showToast("Sin datos en columna G.", 'error'); container.style.display = 'none'; return; }
                 titleEl.textContent = `Gráfico: ${sheetName} (Venta Por Semana)`;
@@ -1079,19 +1311,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const gIdx = headers.findIndex(h => normalizeString(h) === 'gerente');
             const pIdx = headers.findIndex(h => normalizeString(h) === 'promedio');
             if (gIdx === -1 || pIdx === -1) { showToast("No se encontraron columnas gerente/promedio.", 'error'); return; }
-            /* Excel guarda 100% como 1.0 — siempre × 100 */
-            const parseExcelPct = v => {
-                if (v === null || v === undefined || v === '') return 0;
-                if (typeof v === 'number') return Math.round(v * 100);
-                const s = String(v).trim().replace('%', '');
-                const p = parseFloat(s);
-                if (isNaN(p)) return 0;
-                return Math.abs(p) > 1 ? Math.round(p) : Math.round(p * 100);
-            };
+            // _resolveNumericPct maneja objetos enriquecidos y heurística correctamente
             const pts = effectiveRows.map(r => {
                 const lbl = String(r[gIdx] || 'Gerente');
-                const n   = parseExcelPct(r[pIdx]);
-                return { label: lbl, value: n };
+                const n   = Math.round(_resolveNumericPct(r[pIdx]));
+                return { label: lbl, value: isNaN(n) ? 0 : n };
             }).sort((a, b) => b.value - a.value);
             labels = pts.map(p => p.label); values = pts.map(p => p.value);
             barColors = values.map(v => v < 90 ? c.redBg : v > 99 ? c.greenBg : c.yellowBg);

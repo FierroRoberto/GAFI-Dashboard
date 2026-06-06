@@ -4,11 +4,40 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>GAFI Ferrelectrico | Executive Dashboard</title>
+
+    <!-- PWA Meta Tags -->
+    <meta name="application-name" content="GAFI Dashboard">
+    <meta name="description" content="Dashboard ejecutivo de KPIs para GAFI Ferrelectrico">
+    <meta name="theme-color" content="#d32f2f" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#2563eb" media="(prefers-color-scheme: light)">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="GAFI Dashboard">
+    <meta name="msapplication-TileColor" content="#d32f2f">
+    <meta name="msapplication-tap-highlight" content="no">
+
+    <!-- Manifest -->
+    <link rel="manifest" href="manifest.json">
+
+    <!-- Apple Touch Icons -->
+    <link rel="apple-touch-icon" href="icons/icon-152.png">
+    <link rel="apple-touch-icon" sizes="192x192" href="icons/icon-192.png">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-96.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="icons/icon-72.png">
+
+    <!-- Fuentes -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+
+    <!-- Librerías -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="dark-theme">
@@ -132,6 +161,65 @@
 <!-- TOAST CONTAINER -->
 <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
 
+<!-- PWA INSTALL BANNER -->
+<div id="pwaInstallBanner" class="pwa-banner" style="display:none;" role="banner">
+    <div class="pwa-banner-content">
+        <i class="fas fa-mobile-alt pwa-banner-icon"></i>
+        <span>Instala GAFI Dashboard como app</span>
+    </div>
+    <div class="pwa-banner-actions">
+        <button id="pwaInstallBtn" class="btn-pill btn-pill--primary" style="font-size:0.7rem;padding:0.3rem 0.7rem;">
+            <i class="fas fa-download"></i> Instalar
+        </button>
+        <button id="pwaDismissBtn" class="btn-pill btn-pill--ghost" style="font-size:0.7rem;padding:0.3rem 0.6rem;">
+            <i class="fas fa-times"></i>
+        </button>
+    </div>
+</div>
+
 <script src="script.js"></script>
+
+<script>
+/* ── SERVICE WORKER REGISTRATION ── */
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+            .then(reg => console.log('[SW] Registrado:', reg.scope))
+            .catch(err => console.warn('[SW] Error:', err));
+    });
+}
+
+/* ── PWA INSTALL PROMPT ── */
+let _deferredPrompt = null;
+const installBanner = document.getElementById('pwaInstallBanner');
+const installBtn    = document.getElementById('pwaInstallBtn');
+const dismissBtn    = document.getElementById('pwaDismissBtn');
+
+window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault();
+    _deferredPrompt = e;
+    if (installBanner && !sessionStorage.getItem('pwa-dismissed')) {
+        installBanner.style.display = 'flex';
+    }
+});
+
+installBtn?.addEventListener('click', async () => {
+    if (!_deferredPrompt) return;
+    _deferredPrompt.prompt();
+    const { outcome } = await _deferredPrompt.userChoice;
+    if (outcome === 'accepted') installBanner.style.display = 'none';
+    _deferredPrompt = null;
+});
+
+dismissBtn?.addEventListener('click', () => {
+    installBanner.style.display = 'none';
+    sessionStorage.setItem('pwa-dismissed', '1');
+});
+
+window.addEventListener('appinstalled', () => {
+    installBanner.style.display = 'none';
+    _deferredPrompt = null;
+});
+</script>
 </body>
 </html>
