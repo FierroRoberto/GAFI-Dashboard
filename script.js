@@ -367,45 +367,71 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function handleFileSelect(event) {
+        /* CRITICO PARA ANDROID:
+           El error "file or directory could not be found" ocurre porque
+           Android revoca el permiso del content:// URI inmediatamente
+           despues del event handler. Cualquier codigo entre el evento
+           y reader.read() puede invalidar el acceso.
+
+           SOLUCION: reader.readAsArrayBuffer(file) debe ser la PRIMERA
+           instruccion ejecutada, antes de validaciones, toasts o cualquier
+           otra cosa. Las validaciones se hacen DENTRO del onload. */
+
         var files = event.target.files;
         if (!files || files.length === 0) return;
         var file = files[0];
         if (!file) return;
 
-        var ext = file.name.split('.').pop().toLowerCase();
-        if (['xlsx','xls','xlsm','xlsb'].indexOf(ext) === -1) {
-            showToast('Formato no soportado. Use .xlsx, .xls o .xlsm', 'error');
-            return;
-        }
-        if (file.size > 52428800) {
-            showToast('Archivo muy grande (max 50 MB).', 'error');
-            return;
-        }
+        // Iniciar lectura INMEDIATAMENTE - primera instruccion sin demora
+        var reader = new FileReader();
+        reader.readAsArrayBuffer(file);   // <-- debe ser la primera llamada
 
-        showToast('Leyendo archivo...', 'info');
+        // A partir de aqui, el permiso del URI ya fue capturado por FileReader.
+        // Ahora si podemos hacer validaciones y preparar el resto.
 
-        // ── Paso 2: parsear con SheetJS ──
-        function parseAndProcess(arrayBuffer) {
+        var fileName = file.name || '';
+        var fileSize = file.size || 0;
+
+        reader.onload = function(ev) {
+            // Validar extension (dentro del onload, no antes)
+            var ext = fileName.split('.').pop().toLowerCase();
+            if (['xlsx','xls','xlsm','xlsb'].indexOf(ext) === -1) {
+                showToast('Formato no soportado. Use .xlsx o .xls', 'error');
+                return;
+            }
+            if (fileSize > 52428800) {
+                showToast('Archivo muy grande (max 50 MB).', 'error');
+                return;
+            }
+
+            showToast('Procesando archivo...', 'info');
+
+            var arrayBuffer = ev.target.result;
+            if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+                showToast('El archivo esta vacio o no se pudo leer.', 'error');
+                return;
+            }
+
+            // Parsear con SheetJS
             var uint8 = new Uint8Array(arrayBuffer);
             var wb;
             try {
                 wb = XLSX.read(uint8, { type: 'array', raw: true, cellDates: false });
             } catch (e1) {
-                try { wb = XLSX.read(uint8, { type: 'array' }); }
-                catch (e2) {
-                    showToast('Archivo Excel invalido o corrupto.', 'error');
+                try {
+                    wb = XLSX.read(uint8, { type: 'array' });
+                } catch (e2) {
+                    var msg = e2 && e2.message ? e2.message : String(e2);
+                    showToast('Archivo Excel invalido: ' + msg.substring(0, 40), 'error');
                     return;
                 }
             }
-            processWorkbook(wb);
-        }
 
-        // ── Paso 3: construir sheetsData ──
-        function processWorkbook(workbook) {
+            // Construir sheetsData
             var sheetsData = [];
-            for (var si = 0; si < workbook.SheetNames.length; si++) {
-                var sheetName = workbook.SheetNames[si];
-                var worksheet = workbook.Sheets[sheetName];
+            for (var si = 0; si < wb.SheetNames.length; si++) {
+                var sheetName = wb.SheetNames[si];
+                var worksheet = wb.Sheets[sheetName];
                 if (!worksheet || !worksheet['!ref']) {
                     sheetsData.push({ sheetName: sheetName, rowsData: [], headers: [], worksheet: worksheet, rawRows: [], cellMap: {} });
                     continue;
@@ -439,7 +465,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 sheetsData.push({ sheetName: sheetName, rowsData: rowsData, headers: headers, worksheet: worksheet, rawRows: jsonRows, cellMap: cellMap });
             }
-            if (!sheetsData.length) { showEmptyState('El archivo no contiene hojas validas.'); return; }
+
+            if (!sheetsData.length) {
+                showEmptyState('El archivo no contiene hojas validas.');
+                return;
+            }
             currentSheetsData = sheetsData;
             familiasMode      = {};
             ventaDiariaMode   = {};
@@ -447,52 +477,21 @@ document.addEventListener('DOMContentLoaded', () => {
             renderRadioButtons();
             renderSelectedTable();
             showToast('Archivo cargado: ' + sheetsData.length + ' hoja(s)', 'success');
-        }
-
-        // ── Paso 1: leer el archivo ──
-        // Estrategia unica y robusta para Android + iOS:
-        // Leer como Data URL (base64) que TODOS los navegadores moviles soportan,
-        // luego convertir base64 → ArrayBuffer para SheetJS.
-        // readAsDataURL funciona con archivos de Google Drive, WhatsApp,
-        // iCloud, Dropbox y almacenamiento local sin excepcion.
-        function base64ToArrayBuffer(base64) {
-            // Quitar el prefijo "data:...;base64,"
-            var b64 = base64.indexOf(',') !== -1 ? base64.split(',')[1] : base64;
-            var binaryStr = atob(b64);
-            var bytes = new Uint8Array(binaryStr.length);
-            for (var i = 0; i < binaryStr.length; i++) {
-                bytes[i] = binaryStr.charCodeAt(i);
-            }
-            return bytes.buffer;
-        }
-
-        var reader = new FileReader();
-
-        reader.onload = function(ev) {
-            try {
-                var arrayBuffer = base64ToArrayBuffer(ev.target.result);
-                parseAndProcess(arrayBuffer);
-            } catch (err) {
-                var msg = err && err.message ? err.message : String(err);
-                showToast('Error al procesar: ' + msg.substring(0, 60), 'error');
-                try { event.target.value = ''; } catch(e) {}
-            }
         };
 
         reader.onerror = function() {
-            var msg = reader.error ? reader.error.message : 'Error desconocido';
-            showToast('No se pudo leer: ' + msg.substring(0, 60), 'error');
+            var code = reader.error ? reader.error.code : '?';
+            var msg  = reader.error ? reader.error.message : 'desconocido';
+            console.error('[GAFI] FileReader error code=' + code + ' msg=' + msg);
+            // Si falla incluso con lectura inmediata, el archivo no es accesible.
+            // Dar instruccion concreta al usuario.
+            showToast('No se puede acceder al archivo. Descargue el Excel a su carpeta de Descargas e intentelo desde ahi.', 'error');
             try { event.target.value = ''; } catch(e) {}
         };
 
         reader.onabort = function() {
             showToast('Lectura cancelada.', 'error');
         };
-
-        // readAsDataURL es el metodo mas compatible en moviles:
-        // convierte el archivo a base64, evitando todos los problemas
-        // de acceso a filesystem de Android e iOS.
-        reader.readAsDataURL(file);
     }
 
     /* ── RADIO BUTTONS ── */
