@@ -1,21 +1,20 @@
-/**
- * sw.js — Service Worker para GAFI Dashboard PWA
- * Estrategia:
- *   - Shell (HTML, CSS, JS, fuentes): Cache-First con actualización en background.
- *   - Archivos Excel: Network-Only (datos siempre frescos, no se cachean).
- *   - Recursos CDN (Chart.js, SheetJS, FontAwesome): Cache-First.
- */
-
 'use strict';
 
-const CACHE_NAME    = 'gafi-dashboard-v2.0';
-const SHELL_ASSETS  = [
-    './',
+const CACHE_NAME   = 'gafi-dashboard-v3';
+const SHELL_ASSETS = [
     './index.html',
     './style.css',
     './script.js',
     './manifest.json',
     './logo-gafi.png',
+    './icons/icon-72.png',
+    './icons/icon-96.png',
+    './icons/icon-128.png',
+    './icons/icon-144.png',
+    './icons/icon-152.png',
+    './icons/icon-192.png',
+    './icons/icon-384.png',
+    './icons/icon-512.png',
 ];
 
 const CDN_ORIGINS = [
@@ -26,50 +25,55 @@ const CDN_ORIGINS = [
     'cdn.jsdelivr.net',
 ];
 
-/* ── INSTALL: pre-cachear el app shell ── */
+/* ── INSTALL ── */
 self.addEventListener('install', event => {
     event.waitUntil(
         caches.open(CACHE_NAME)
-            .then(cache => cache.addAll(SHELL_ASSETS))
-            .then(() => self.skipWaiting())   // activar de inmediato
+            .then(cache => {
+                // Cachear cada asset individualmente para que un error
+                // en uno no bloquee toda la instalación
+                return Promise.allSettled(
+                    SHELL_ASSETS.map(url =>
+                        cache.add(url).catch(err =>
+                            console.warn('[SW] No se pudo cachear:', url, err)
+                        )
+                    )
+                );
+            })
+            .then(() => self.skipWaiting())
     );
 });
 
-/* ── ACTIVATE: limpiar caches viejos ── */
+/* ── ACTIVATE ── */
 self.addEventListener('activate', event => {
     event.waitUntil(
         caches.keys()
             .then(keys => Promise.all(
-                keys
-                    .filter(key => key !== CACHE_NAME)
-                    .map(key => caches.delete(key))
+                keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))
             ))
             .then(() => self.clients.claim())
     );
 });
 
-/* ── FETCH: estrategia mixta ── */
+/* ── FETCH ── */
 self.addEventListener('fetch', event => {
     const { request } = event;
-    const url         = new URL(request.url);
+    const url = new URL(request.url);
 
-    // Ignorar solicitudes no-GET
     if (request.method !== 'GET') return;
 
-    // Archivos Excel → siempre red (nunca cachear datos de usuario)
+    // Archivos Excel — nunca cachear
     if (/\.(xlsx|xls|xlsm|xlsb)$/i.test(url.pathname)) return;
 
-    // Recursos CDN → Cache-First
+    // CDN — Cache First
     if (CDN_ORIGINS.some(o => url.hostname.includes(o))) {
         event.respondWith(cacheFirst(request));
         return;
     }
 
-    // App shell → Stale-While-Revalidate
+    // App shell — Stale While Revalidate
     event.respondWith(staleWhileRevalidate(request));
 });
-
-/* ── ESTRATEGIAS ── */
 
 async function cacheFirst(request) {
     const cached = await caches.match(request);
@@ -82,20 +86,18 @@ async function cacheFirst(request) {
         }
         return response;
     } catch {
-        return new Response('Sin conexión', { status: 503, statusText: 'Offline' });
+        return new Response('Sin conexión', { status: 503 });
     }
 }
 
 async function staleWhileRevalidate(request) {
     const cache  = await caches.open(CACHE_NAME);
     const cached = await cache.match(request);
-
     const fetchPromise = fetch(request)
         .then(response => {
             if (response.ok) cache.put(request, response.clone());
             return response;
         })
-        .catch(() => cached); // fallback a cache si no hay red
-
+        .catch(() => cached);
     return cached || fetchPromise;
 }
