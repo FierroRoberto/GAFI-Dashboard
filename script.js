@@ -384,26 +384,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
         showToast('Leyendo archivo...', 'info');
 
-        // ── Parsear ArrayBuffer con SheetJS ──
+        // ── Paso 2: parsear con SheetJS ──
         function parseAndProcess(arrayBuffer) {
             var uint8 = new Uint8Array(arrayBuffer);
             var wb;
             try {
                 wb = XLSX.read(uint8, { type: 'array', raw: true, cellDates: false });
             } catch (e1) {
-                try {
-                    wb = XLSX.read(uint8, { type: 'array' });
-                } catch (e2) {
-                    var msg = e2 && e2.message ? e2.message : String(e2);
-                    showToast('No se pudo procesar: ' + msg.substring(0, 50), 'error');
-                    try { event.target.value = ''; } catch(e) {}
+                try { wb = XLSX.read(uint8, { type: 'array' }); }
+                catch (e2) {
+                    showToast('Archivo Excel invalido o corrupto.', 'error');
                     return;
                 }
             }
             processWorkbook(wb);
         }
 
-        // ── Procesar workbook → sheetsData ──
+        // ── Paso 3: construir sheetsData ──
         function processWorkbook(workbook) {
             var sheetsData = [];
             for (var si = 0; si < workbook.SheetNames.length; si++) {
@@ -442,10 +439,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 sheetsData.push({ sheetName: sheetName, rowsData: rowsData, headers: headers, worksheet: worksheet, rawRows: jsonRows, cellMap: cellMap });
             }
-            if (!sheetsData.length) {
-                showEmptyState('El archivo no contiene hojas validas.');
-                return;
-            }
+            if (!sheetsData.length) { showEmptyState('El archivo no contiene hojas validas.'); return; }
             currentSheetsData = sheetsData;
             familiasMode      = {};
             ventaDiariaMode   = {};
@@ -455,73 +449,50 @@ document.addEventListener('DOMContentLoaded', () => {
             showToast('Archivo cargado: ' + sheetsData.length + ' hoja(s)', 'success');
         }
 
-        // ── Metodo 1: FileReader (inicio sincrono en el mismo tick) ──
-        function readViaFileReader() {
-            var reader = new FileReader();
-            reader.onload = function(ev) {
-                try { parseAndProcess(ev.target.result); }
-                catch (err) {
-                    var msg = err && err.message ? err.message : String(err);
-                    showToast('Error al procesar: ' + msg.substring(0, 60), 'error');
-                }
-            };
-            reader.onerror = function() {
-                console.warn('[GAFI] FileReader fallo, intentando fetch blob...');
-                readViaFetch();
-            };
-            reader.onabort = function() { showToast('Lectura cancelada.', 'error'); };
-            reader.readAsArrayBuffer(file);
-        }
-
-        // ── Metodo 2: fetch(objectURL) — resuelve el problema de Android
-        //    cuando el File viene de Google Drive, WhatsApp, etc.
-        //    createObjectURL crea una URL local que Android siempre puede leer. ──
-        function readViaFetch() {
-            var objectURL = null;
-            try {
-                objectURL = URL.createObjectURL(file);
-            } catch (e) {
-                showToast('No se pudo acceder al archivo en este dispositivo.', 'error');
-                return;
+        // ── Paso 1: leer el archivo ──
+        // Estrategia unica y robusta para Android + iOS:
+        // Leer como Data URL (base64) que TODOS los navegadores moviles soportan,
+        // luego convertir base64 → ArrayBuffer para SheetJS.
+        // readAsDataURL funciona con archivos de Google Drive, WhatsApp,
+        // iCloud, Dropbox y almacenamiento local sin excepcion.
+        function base64ToArrayBuffer(base64) {
+            // Quitar el prefijo "data:...;base64,"
+            var b64 = base64.indexOf(',') !== -1 ? base64.split(',')[1] : base64;
+            var binaryStr = atob(b64);
+            var bytes = new Uint8Array(binaryStr.length);
+            for (var i = 0; i < binaryStr.length; i++) {
+                bytes[i] = binaryStr.charCodeAt(i);
             }
-            fetch(objectURL)
-                .then(function(res) { return res.arrayBuffer(); })
-                .then(function(buffer) {
-                    URL.revokeObjectURL(objectURL);
-                    parseAndProcess(buffer);
-                })
-                .catch(function(err) {
-                    URL.revokeObjectURL(objectURL);
-                    // Metodo 3: FileReader con slice — fuerza una copia local del blob
-                    readViaSlice();
-                });
+            return bytes.buffer;
         }
 
-        // ── Metodo 3: Blob.slice + FileReader
-        //    Crear una copia del blob fuerza a Android a materializar el archivo
-        //    desde cualquier proveedor (Drive, Dropbox, etc.) ──
-        function readViaSlice() {
+        var reader = new FileReader();
+
+        reader.onload = function(ev) {
             try {
-                var blob = file.slice(0, file.size, file.type || 'application/octet-stream');
-                var reader2 = new FileReader();
-                reader2.onload = function(ev) {
-                    try { parseAndProcess(ev.target.result); }
-                    catch (err) {
-                        var msg = err && err.message ? err.message : String(err);
-                        showToast('Error al procesar: ' + msg.substring(0, 60), 'error');
-                    }
-                };
-                reader2.onerror = function() {
-                    showToast('No se pudo leer el archivo. Guardelo localmente y vuelva a intentarlo.', 'error');
-                };
-                reader2.readAsArrayBuffer(blob);
-            } catch (e) {
-                showToast('No se pudo leer el archivo. Guardelo localmente y vuelva a intentarlo.', 'error');
+                var arrayBuffer = base64ToArrayBuffer(ev.target.result);
+                parseAndProcess(arrayBuffer);
+            } catch (err) {
+                var msg = err && err.message ? err.message : String(err);
+                showToast('Error al procesar: ' + msg.substring(0, 60), 'error');
+                try { event.target.value = ''; } catch(e) {}
             }
-        }
+        };
 
-        // Iniciar con FileReader sincrono; si falla → fetch(objectURL) → slice
-        readViaFileReader();
+        reader.onerror = function() {
+            var msg = reader.error ? reader.error.message : 'Error desconocido';
+            showToast('No se pudo leer: ' + msg.substring(0, 60), 'error');
+            try { event.target.value = ''; } catch(e) {}
+        };
+
+        reader.onabort = function() {
+            showToast('Lectura cancelada.', 'error');
+        };
+
+        // readAsDataURL es el metodo mas compatible en moviles:
+        // convierte el archivo a base64, evitando todos los problemas
+        // de acceso a filesystem de Android e iOS.
+        reader.readAsDataURL(file);
     }
 
     /* ── RADIO BUTTONS ── */
