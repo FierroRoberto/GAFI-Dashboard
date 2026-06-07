@@ -372,26 +372,26 @@ document.addEventListener('DOMContentLoaded', () => {
         var file = files[0];
         if (!file) return;
 
-        var fileName = file.name || '';
-        var fileSize = file.size || 0;
-        var ext = fileName.split('.').pop().toLowerCase();
-
+        var ext = (file.name || '').split('.').pop().toLowerCase();
         if (['xlsx','xls','xlsm','xlsb'].indexOf(ext) === -1) {
             showToast('Formato no soportado. Use .xlsx o .xls', 'error');
             return;
         }
-        if (fileSize > 52428800) {
+        if (file.size > 52428800) {
             showToast('Archivo muy grande (max 50 MB).', 'error');
             return;
         }
 
         showToast('Leyendo archivo...', 'info');
 
-        // Funcion central que procesa el ArrayBuffer independientemente
-        // del metodo que lo obtuvo
+        /* ─────────────────────────────────────────────────────
+           processBuffer: parsea el ArrayBuffer con SheetJS y
+           construye sheetsData. Es el destino de todos los
+           métodos de lectura.
+        ───────────────────────────────────────────────────── */
         function processBuffer(arrayBuffer) {
             if (!arrayBuffer || arrayBuffer.byteLength === 0) {
-                showToast('El archivo esta vacio.', 'error');
+                showToast('El archivo está vacío.', 'error');
                 return;
             }
             var uint8 = new Uint8Array(arrayBuffer);
@@ -401,8 +401,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } catch (e1) {
                 try { wb = XLSX.read(uint8, { type: 'array' }); }
                 catch (e2) {
-                    var m = e2 && e2.message ? e2.message : String(e2);
-                    showToast('Archivo Excel invalido: ' + m.substring(0, 40), 'error');
+                    showToast('Archivo Excel inválido.', 'error');
                     return;
                 }
             }
@@ -411,12 +410,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 var sheetName = wb.SheetNames[si];
                 var worksheet = wb.Sheets[sheetName];
                 if (!worksheet || !worksheet['!ref']) {
-                    sheetsData.push({ sheetName: sheetName, rowsData: [], headers: [], worksheet: worksheet, rawRows: [], cellMap: {} });
+                    sheetsData.push({ sheetName: sheetName, rowsData: [], headers: [],
+                                      worksheet: worksheet, rawRows: [], cellMap: {} });
                     continue;
                 }
-                var jsonRows = XLSX.utils.sheet_to_json(worksheet, { defval: '', header: 1, raw: true });
+                var jsonRows = XLSX.utils.sheet_to_json(worksheet,
+                                  { defval: '', header: 1, raw: true });
                 if (jsonRows.length === 0) {
-                    sheetsData.push({ sheetName: sheetName, rowsData: [], headers: [], worksheet: worksheet, rawRows: [], cellMap: {} });
+                    sheetsData.push({ sheetName: sheetName, rowsData: [], headers: [],
+                                      worksheet: worksheet, rawRows: [], cellMap: {} });
                     continue;
                 }
                 var cellMap = _buildCellMap(worksheet);
@@ -428,22 +430,30 @@ document.addEventListener('DOMContentLoaded', () => {
                     var row = jsonRows[rIdx + 1];
                     var rowArr = [];
                     for (var cIdx = 0; cIdx < headers.length; cIdx++) {
-                        var rawVal = (row && row[cIdx] !== undefined && row[cIdx] !== null) ? row[cIdx] : '';
-                        var cell   = cellMap[cIdx + ',' + (rIdx + 1)];
-                        var norm   = normalizeCell(rawVal, cell);
+                        var rawVal = (row && row[cIdx] !== undefined && row[cIdx] !== null)
+                                     ? row[cIdx] : '';
+                        var cell  = cellMap[cIdx + ',' + (rIdx + 1)];
+                        var norm  = normalizeCell(rawVal, cell);
                         if (!norm.isPercent) {
                             rowArr.push(rawVal);
                         } else {
                             var fmt = (cell && (cell.z || cell.numFmt)) || '';
-                            var dec = fmt.indexOf('.00') !== -1 ? 2 : fmt.indexOf('.0') !== -1 ? 1 : 0;
-                            rowArr.push({ _pct: true, _val: norm.value, _raw: rawVal, _dec: dec });
+                            var dec = fmt.indexOf('.00') !== -1 ? 2
+                                    : fmt.indexOf('.0')  !== -1 ? 1 : 0;
+                            rowArr.push({ _pct: true, _val: norm.value,
+                                          _raw: rawVal, _dec: dec });
                         }
                     }
                     rowsData.push(rowArr);
                 }
-                sheetsData.push({ sheetName: sheetName, rowsData: rowsData, headers: headers, worksheet: worksheet, rawRows: jsonRows, cellMap: cellMap });
+                sheetsData.push({ sheetName: sheetName, rowsData: rowsData,
+                                   headers: headers, worksheet: worksheet,
+                                   rawRows: jsonRows, cellMap: cellMap });
             }
-            if (!sheetsData.length) { showEmptyState('El archivo no contiene hojas validas.'); return; }
+            if (!sheetsData.length) {
+                showEmptyState('El archivo no contiene hojas válidas.');
+                return;
+            }
             currentSheetsData = sheetsData;
             familiasMode      = {};
             ventaDiariaMode   = {};
@@ -453,47 +463,102 @@ document.addEventListener('DOMContentLoaded', () => {
             showToast('Archivo cargado: ' + sheetsData.length + ' hoja(s)', 'success');
         }
 
-        // METODO 1: file.arrayBuffer() — Promise nativa, la mas compatible
-        // con content:// URIs de Android (Google Drive, WhatsApp, etc.)
-        // porque usa el ContentResolver de Android directamente sin FileReader.
-        if (typeof file.arrayBuffer === 'function') {
-            file.arrayBuffer()
-                .then(function(buf) { processBuffer(buf); })
-                .catch(function() { tryFileReader(); });
-            return;
+        /* ─────────────────────────────────────────────────────
+           MÉTODO 1 — XMLHttpRequest con Blob URL
+           XHR es la API más robusta en Android Chrome para leer
+           archivos de content:// URIs (Google Drive, SAF, etc.)
+           porque usa el DownloadManager del sistema en lugar del
+           FileSystem API que falla con URIs temporales.
+        ───────────────────────────────────────────────────── */
+        function readViaXHR(blobUrl, cleanup) {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', blobUrl, true);
+            xhr.responseType = 'arraybuffer';
+            xhr.onload = function () {
+                if (cleanup) cleanup();
+                if (xhr.status === 200 || xhr.status === 0) {
+                    try { processBuffer(xhr.response); }
+                    catch (e) { showToast('Error al procesar: ' + String(e).substring(0, 50), 'error'); }
+                } else {
+                    readViaFileReader();
+                }
+            };
+            xhr.onerror = function () {
+                if (cleanup) cleanup();
+                readViaFileReader();
+            };
+            xhr.send();
         }
 
-        // METODO 2: FileReader como fallback
-        tryFileReader();
-
-        function tryFileReader() {
+        /* ─────────────────────────────────────────────────────
+           MÉTODO 2 — FileReader.readAsArrayBuffer
+           Fallback clásico. Funciona para archivos en
+           almacenamiento local (carpeta Descargas, etc.)
+        ───────────────────────────────────────────────────── */
+        function readViaFileReader() {
             var reader = new FileReader();
-            reader.onload  = function(ev) { processBuffer(ev.target.result); };
-            reader.onerror = function() { tryResponseBlob(); };
-            reader.onabort = function() { showToast('Lectura cancelada.', 'error'); };
-            try { reader.readAsArrayBuffer(file); }
-            catch(e) { tryResponseBlob(); }
+            reader.onload = function (ev) {
+                try { processBuffer(ev.target.result); }
+                catch (e) { showToast('Error al procesar el archivo.', 'error'); }
+            };
+            reader.onerror = function () {
+                readViaResponse();
+            };
+            reader.onabort = function () {
+                showToast('Lectura cancelada.', 'error');
+            };
+            try {
+                reader.readAsArrayBuffer(file);
+            } catch (e) {
+                readViaResponse();
+            }
         }
 
-        // METODO 3: Response(blob).arrayBuffer() — API moderna que Android
-        // Chrome usa internamente para resolver content:// URIs de SAF.
-        // Convierte el File a Response y lee el body como ArrayBuffer.
-        function tryResponseBlob() {
-            if (typeof Response === 'undefined') { showFinalError(); return; }
+        /* ─────────────────────────────────────────────────────
+           MÉTODO 3 — Response(blob).arrayBuffer()
+           Último recurso: la Fetch API convierte el File a un
+           stream interno que Chrome puede resolver aunque el
+           URI original haya expirado.
+        ───────────────────────────────────────────────────── */
+        function readViaResponse() {
+            if (typeof Response === 'undefined') {
+                showToast('No se pudo leer el archivo. Guárdelo en Descargas e intente de nuevo.', 'error');
+                return;
+            }
             try {
                 new Response(file).arrayBuffer()
-                    .then(function(buf) { processBuffer(buf); })
-                    .catch(function() { showFinalError(); });
-            } catch(e) { showFinalError(); }
+                    .then(function (buf) { processBuffer(buf); })
+                    .catch(function () {
+                        showToast('No se pudo leer el archivo. Guárdelo en Descargas e intente de nuevo.', 'error');
+                    });
+            } catch (e) {
+                showToast('No se pudo leer el archivo. Guárdelo en Descargas e intente de nuevo.', 'error');
+            }
         }
 
-        function showFinalError() {
-            showToast('No se pudo leer el archivo. Intente compartirlo a "Mis Archivos" y abrirlo desde ahi.', 'error');
-            try { event.target.value = ''; } catch(e) {}
+        /* ─────────────────────────────────────────────────────
+           INICIO: crear Blob URL y leer con XHR.
+           createObjectURL es síncrono → el permiso del URI
+           se transfiere al blob:// antes de que expire.
+           Si createObjectURL no está disponible, ir directo
+           al FileReader.
+        ───────────────────────────────────────────────────── */
+        if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+            var blobUrl = null;
+            try {
+                blobUrl = URL.createObjectURL(file);
+                readViaXHR(blobUrl, function () {
+                    try { URL.revokeObjectURL(blobUrl); } catch (e) {}
+                });
+            } catch (e) {
+                readViaFileReader();
+            }
+        } else {
+            readViaFileReader();
         }
     }
 
-    /* ── RADIO BUTTONS ── */
+        /* ── RADIO BUTTONS ── */
     function renderRadioButtons() {
         const container = document.getElementById('sheetsRadioGroup');
         if (!container) return;

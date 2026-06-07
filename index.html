@@ -1,227 +1,254 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>GAFI Ferrelectrico | Executive Dashboard</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>GAFI Ferrelectrico | Executive Dashboard</title>
 
-    <!-- PWA Meta Tags -->
-    <meta name="application-name" content="GAFI Dashboard">
-    <meta name="description" content="Dashboard ejecutivo de KPIs para GAFI Ferrelectrico">
-    <!-- Un solo theme-color sin media query — requerido por Chrome Android para PWA install -->
-    <meta name="theme-color" content="#d32f2f">
-    <meta name="mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="GAFI Dashboard">
-    <meta name="msapplication-TileColor" content="#d32f2f">
-    <meta name="msapplication-tap-highlight" content="no">
+  <!-- ══ PWA META TAGS ══════════════════════════════════════ -->
+  <meta name="application-name"                content="GAFI Dashboard">
+  <meta name="description"                     content="Dashboard ejecutivo de KPIs — GAFI Ferrelectrico">
+  <meta name="theme-color"                     content="#d32f2f">
+  <meta name="mobile-web-app-capable"          content="yes">
+  <meta name="apple-mobile-web-app-capable"    content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title"      content="GAFI KPIs">
+  <meta name="msapplication-TileColor"         content="#d32f2f">
+  <meta name="msapplication-tap-highlight"     content="no">
 
-    <!-- Manifest -->
-    <link rel="manifest" href="manifest.json">
+  <!-- ══ MANIFEST & ICONS ══════════════════════════════════ -->
+  <link rel="manifest"        href="manifest.json">
+  <link rel="apple-touch-icon"              href="icons/icon-152.png">
+  <link rel="apple-touch-icon" sizes="192x192" href="icons/icon-192.png">
+  <link rel="icon" type="image/png" sizes="96x96" href="icons/icon-96.png">
+  <link rel="icon" type="image/png" sizes="72x72" href="icons/icon-72.png">
 
-    <!-- Apple Touch Icons -->
-    <link rel="apple-touch-icon" href="icons/icon-152.png">
-    <link rel="apple-touch-icon" sizes="192x192" href="icons/icon-192.png">
+  <!-- ══ FONTS ═════════════════════════════════════════════ -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
 
-    <!-- Favicon -->
-    <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-96.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="icons/icon-72.png">
+  <!-- ══ LIBS ══════════════════════════════════════════════ -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-    <!-- Fuentes -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-
-    <!-- Librerías -->
-    <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-
-    <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body class="dark-theme">
 
-<!-- NOISE TEXTURE OVERLAY -->
-<div class="noise-overlay" aria-hidden="true"></div>
-
-<!-- AMBIENT GLOW -->
-<div class="ambient-glow" aria-hidden="true"></div>
+<div class="noise-overlay"  aria-hidden="true"></div>
+<div class="ambient-glow"   aria-hidden="true"></div>
 
 <div class="app-container">
-    <!-- HEADER -->
-    <header class="executive-header">
-        <div class="brand-area">
-            <div class="logo-wrapper">
-                <div class="logo-ring" aria-hidden="true"></div>
-                <img src="logo-gafi.png" alt="GAFI Logo" width="56" height="48" class="logo-img">
-            </div>
-            <div class="brand-text">
-                <h1 class="company-name" contenteditable="true" title="Haz clic para editar">GAFI Ferrelectrico</h1>
-                <div class="company-subtitle">
-                    <span class="status-dot" aria-hidden="true"></span>
-                    Simplificamos el mundo ferretero
-                </div>
-            </div>
+  <!-- ══ HEADER ════════════════════════════════════════════ -->
+  <header class="executive-header">
+    <div class="brand-area">
+      <div class="logo-wrapper">
+        <div class="logo-ring" aria-hidden="true"></div>
+        <img src="logo-gafi.png" alt="GAFI Logo" width="56" height="48" class="logo-img"
+             onerror="this.style.display='none'">
+      </div>
+      <div class="brand-text">
+        <h1 class="company-name" contenteditable="true" title="Clic para editar">GAFI Ferrelectrico</h1>
+        <div class="company-subtitle">
+          <span class="status-dot" aria-hidden="true"></span>
+          Simplificamos el mundo ferretero
         </div>
-        <div class="header-actions">
-            <div class="file-upload-wrapper">
-                <label for="excelInput" class="btn-pill btn-pill--primary" role="button">
-                    <i class="fas fa-file-excel"></i>
-                    <span class="hide-mobile">Seleccionar Excel</span>
-                    <span class="show-mobile">📂</span>
-                </label>
-                <input type="file" id="excelInput"
-                       accept=".xlsx,.xls,.xlsm,.xlsb,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-                       style="display: none;" aria-label="Seleccionar archivo Excel">
-            </div>
-            <button id="exportAllBtn" class="btn-pill btn-pill--secondary" aria-label="Exportar todos los datos">
-                <i class="fas fa-download"></i>
-                <span class="hide-mobile">Exportar todo</span>
-                <span class="show-mobile">📎</span>
-            </button>
-            <button id="themeToggleBtn" class="btn-pill btn-pill--ghost" aria-label="Cambiar tema">
-                <i class="fas fa-moon"></i>
-                <span class="hide-mobile">Modo Claro</span>
-                <span class="show-mobile">🌓</span>
-            </button>
-        </div>
-    </header>
-
-    <div class="main-layout">
-        <!-- SIDEBAR -->
-        <aside class="sidebar" id="sidebar" aria-label="Navegación de hojas">
-            <div class="sidebar-header">
-                <i class="fas fa-layer-group sidebar-icon"></i>
-                <span>KPI´s</span>
-            </div>
-            <nav class="sheets-radio-group" id="sheetsRadioGroup" aria-label="Lista de hojas">
-                <div class="placeholder-text">
-                    <i class="fas fa-file-upload" style="font-size:1.4rem;opacity:0.4;margin-bottom:0.5rem;"></i>
-                    <span>Cargue un Excel</span>
-                </div>
-            </nav>
-            <div class="helper-note">
-                <i class="fas fa-sync-alt"></i>
-                <span>Para actualizar, vuelva a seleccionar el archivo.</span>
-                <div class="helper-credit">Por GVR RFA</div>
-            </div>
-        </aside>
-
-        <!-- MAIN CONTENT -->
-        <main class="main-content" role="main">
-            <!-- CHART CONTAINER -->
-            <div class="chart-container" id="chartContainer" style="display: none;" role="region" aria-label="Gráfico">
-                <div class="chart-header">
-                    <div class="chart-title-area">
-                        <div class="chart-badge" aria-hidden="true"><i class="fas fa-chart-bar"></i></div>
-                        <h3 id="chartTitle">Gráfico de la hoja seleccionada</h3>
-                    </div>
-                    <button id="closeChartBtn" class="btn-close-chart" aria-label="Cerrar gráfico">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-                <div class="chart-canvas-wrap">
-                    <canvas id="barChart" width="800" height="280" aria-label="Gráfico de datos"></canvas>
-                </div>
-                <div class="chart-footer">
-                    <i class="fas fa-hand-pointer" style="margin-right:0.3rem;"></i>
-                    <small>Haz clic en la tabla para actualizar el gráfico</small>
-                </div>
-            </div>
-
-            <!-- TABLE VIEWPORT -->
-            <div class="sheets-viewport" id="sheetsViewport" role="region" aria-label="Tabla de datos">
-                <div class="empty-state" id="emptyState">
-                    <div class="empty-icon-wrap" aria-hidden="true">
-                        <i class="fas fa-chart-line"></i>
-                    </div>
-                    <h3>Vista ejecutiva de datos</h3>
-                    <p>Seleccione un archivo Excel (.xlsx / .xls) para visualizar hojas, métricas y formato condicional.</p>
-                    <ul class="empty-hints" aria-label="Instrucciones">
-                        <li><i class="fas fa-mouse-pointer"></i> Seleccione una hoja en la barra lateral</li>
-                        <li><i class="fas fa-hand-pointer"></i> Haga clic en la tabla para ver su gráfica</li>
-                    </ul>
-                </div>
-            </div>
-        </main>
+      </div>
     </div>
+    <div class="header-actions">
+      <div class="file-upload-wrapper">
+        <label for="excelInput" class="btn-pill btn-pill--primary" role="button">
+          <i class="fas fa-file-excel"></i>
+          <span class="hide-mobile">Seleccionar Excel</span>
+          <span class="show-mobile">📂</span>
+        </label>
+        <!--
+          CRITICO Android: NO agregar capture="" ni otros atributos que
+          restrinjan el selector. El accept debe incluir MIME types completos
+          para que el SAF (Storage Access Framework) de Android muestre
+          archivos de Google Drive, Downloads, etc.
+        -->
+        <input type="file" id="excelInput"
+               accept=".xlsx,.xls,.xlsm,.xlsb,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/octet-stream"
+               style="display:none;" aria-label="Seleccionar archivo Excel">
+      </div>
+      <button id="exportAllBtn" class="btn-pill btn-pill--secondary">
+        <i class="fas fa-download"></i>
+        <span class="hide-mobile">Exportar todo</span>
+        <span class="show-mobile">📎</span>
+      </button>
+      <button id="themeToggleBtn" class="btn-pill btn-pill--ghost">
+        <i class="fas fa-moon"></i>
+        <span class="hide-mobile">Modo Claro</span>
+        <span class="show-mobile">🌓</span>
+      </button>
+    </div>
+  </header>
 
-    <!-- FOOTER -->
-    <footer class="executive-footer">
-        <div class="footer-note">
-            <i class="fas fa-sync-alt"></i>
-            <strong>Actualización:</strong> modifica el Excel, guárdalo y vuelve a seleccionar el archivo.
+  <div class="main-layout">
+    <!-- ══ SIDEBAR ══════════════════════════════════════════ -->
+    <aside class="sidebar" id="sidebar" aria-label="Navegación de hojas">
+      <div class="sidebar-header">
+        <i class="fas fa-layer-group sidebar-icon"></i>
+        <span>KPI´s</span>
+      </div>
+      <nav class="sheets-radio-group" id="sheetsRadioGroup" aria-label="Lista de hojas">
+        <div class="placeholder-text">
+          <i class="fas fa-file-upload" style="font-size:1.4rem;opacity:0.4;margin-bottom:.5rem;"></i>
+          <span>Cargue un Excel</span>
         </div>
-        <div class="footer-note footer-note--right">
-            <i class="fas fa-shield-alt"></i>
-            Procesamiento local · SheetJS · Datos seguros
+      </nav>
+      <div class="helper-note">
+        <i class="fas fa-sync-alt"></i>
+        <span>Para actualizar, vuelva a seleccionar el archivo.</span>
+        <div class="helper-credit">Por GVR RFA</div>
+      </div>
+    </aside>
+
+    <!-- ══ MAIN ═════════════════════════════════════════════ -->
+    <main class="main-content" role="main">
+      <!-- Gráfico -->
+      <div class="chart-container" id="chartContainer" style="display:none;" role="region" aria-label="Gráfico">
+        <div class="chart-header">
+          <div class="chart-title-area">
+            <div class="chart-badge" aria-hidden="true"><i class="fas fa-chart-bar"></i></div>
+            <h3 id="chartTitle">Gráfico de la hoja seleccionada</h3>
+          </div>
+          <button id="closeChartBtn" class="btn-close-chart" aria-label="Cerrar gráfico">
+            <i class="fas fa-times"></i>
+          </button>
         </div>
-    </footer>
+        <div class="chart-canvas-wrap">
+          <canvas id="barChart" width="800" height="280" aria-label="Gráfico de datos"></canvas>
+        </div>
+        <div class="chart-footer">
+          <i class="fas fa-hand-pointer" style="margin-right:.3rem;"></i>
+          <small>Haz clic en la tabla para actualizar el gráfico</small>
+        </div>
+      </div>
+
+      <!-- Tabla -->
+      <div class="sheets-viewport" id="sheetsViewport" role="region" aria-label="Tabla de datos">
+        <div class="empty-state" id="emptyState">
+          <div class="empty-icon-wrap" aria-hidden="true"><i class="fas fa-chart-line"></i></div>
+          <h3>Vista ejecutiva de datos</h3>
+          <p>Seleccione un archivo Excel (.xlsx / .xls) para visualizar hojas, métricas y formato condicional.</p>
+          <ul class="empty-hints">
+            <li><i class="fas fa-mouse-pointer"></i> Seleccione una hoja en la barra lateral</li>
+            <li><i class="fas fa-hand-pointer"></i> Haga clic en la tabla para ver su gráfica</li>
+          </ul>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- ══ FOOTER ════════════════════════════════════════════ -->
+  <footer class="executive-footer">
+    <div class="footer-note">
+      <i class="fas fa-sync-alt"></i>
+      <strong>Actualización:</strong> modifica el Excel, guárdalo y vuelve a seleccionar.
+    </div>
+    <div class="footer-note footer-note--right">
+      <i class="fas fa-shield-alt"></i>
+      Procesamiento local · SheetJS · Datos seguros
+    </div>
+  </footer>
 </div>
 
-<!-- TOAST CONTAINER -->
+<!-- ══ TOAST ══════════════════════════════════════════════ -->
 <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
 
-<!-- PWA INSTALL BANNER -->
+<!-- ══ BANNER DE INSTALACIÓN PWA ════════════════════════ -->
 <div id="pwaInstallBanner" class="pwa-banner" style="display:none;" role="banner">
-    <div class="pwa-banner-content">
-        <i class="fas fa-mobile-alt pwa-banner-icon"></i>
-        <span>Instala GAFI Dashboard como app</span>
-    </div>
-    <div class="pwa-banner-actions">
-        <button id="pwaInstallBtn" class="btn-pill btn-pill--primary" style="font-size:0.7rem;padding:0.3rem 0.7rem;">
-            <i class="fas fa-download"></i> Instalar
-        </button>
-        <button id="pwaDismissBtn" class="btn-pill btn-pill--ghost" style="font-size:0.7rem;padding:0.3rem 0.6rem;">
-            <i class="fas fa-times"></i>
-        </button>
-    </div>
+  <div class="pwa-banner-content">
+    <i class="fas fa-mobile-alt pwa-banner-icon"></i>
+    <span>Instala GAFI Dashboard como app</span>
+  </div>
+  <div class="pwa-banner-actions">
+    <button id="pwaInstallBtn" class="btn-pill btn-pill--primary"
+            style="font-size:.7rem;padding:.3rem .7rem;">
+      <i class="fas fa-download"></i> Instalar
+    </button>
+    <button id="pwaDismissBtn" class="btn-pill btn-pill--ghost"
+            style="font-size:.7rem;padding:.3rem .6rem;">
+      <i class="fas fa-times"></i>
+    </button>
+  </div>
 </div>
 
+<!-- ══ APP SCRIPT ════════════════════════════════════════ -->
 <script src="script.js"></script>
 
+<!-- ══ PWA: SW + INSTALL PROMPT ════════════════════════ -->
 <script>
-/* ── SERVICE WORKER REGISTRATION ── */
-if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js')
-            .then(reg => console.log('[SW] Registrado:', reg.scope))
-            .catch(err => console.warn('[SW] Error:', err));
+(function () {
+  'use strict';
+
+  /* ── 1. Registrar Service Worker ── */
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('./sw.js', { scope: './' })
+        .then(function (reg) {
+          console.log('[SW] OK scope:', reg.scope);
+          /* Forzar actualización si hay nuevo SW esperando */
+          if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+          reg.addEventListener('updatefound', function () {
+            var nw = reg.installing;
+            if (!nw) return;
+            nw.addEventListener('statechange', function () {
+              if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+                console.log('[SW] Actualización disponible');
+              }
+            });
+          });
+        })
+        .catch(function (err) { console.warn('[SW] Error registro:', err); });
     });
-}
+  }
 
-/* ── PWA INSTALL PROMPT ── */
-let _deferredPrompt = null;
-const installBanner = document.getElementById('pwaInstallBanner');
-const installBtn    = document.getElementById('pwaInstallBtn');
-const dismissBtn    = document.getElementById('pwaDismissBtn');
+  /* ── 2. Capturar el prompt de instalación ── */
+  var _prompt = null;
+  var banner  = document.getElementById('pwaInstallBanner');
+  var btnInst = document.getElementById('pwaInstallBtn');
+  var btnDism = document.getElementById('pwaDismissBtn');
 
-window.addEventListener('beforeinstallprompt', e => {
+  window.addEventListener('beforeinstallprompt', function (e) {
     e.preventDefault();
-    _deferredPrompt = e;
-    if (installBanner && !sessionStorage.getItem('pwa-dismissed')) {
-        installBanner.style.display = 'flex';
+    _prompt = e;
+    /* Mostrar banner solo si no fue descartado en esta sesión */
+    if (banner && !sessionStorage.getItem('pwa-dismissed')) {
+      banner.style.display = 'flex';
     }
-});
+  });
 
-installBtn?.addEventListener('click', async () => {
-    if (!_deferredPrompt) return;
-    _deferredPrompt.prompt();
-    const { outcome } = await _deferredPrompt.userChoice;
-    if (outcome === 'accepted') installBanner.style.display = 'none';
-    _deferredPrompt = null;
-});
+  if (btnInst) {
+    btnInst.addEventListener('click', function () {
+      if (!_prompt) return;
+      banner.style.display = 'none';
+      _prompt.prompt();
+      _prompt.userChoice.then(function (r) {
+        console.log('[PWA] Install outcome:', r.outcome);
+        _prompt = null;
+      });
+    });
+  }
 
-dismissBtn?.addEventListener('click', () => {
-    installBanner.style.display = 'none';
-    sessionStorage.setItem('pwa-dismissed', '1');
-});
+  if (btnDism) {
+    btnDism.addEventListener('click', function () {
+      banner.style.display = 'none';
+      sessionStorage.setItem('pwa-dismissed', '1');
+    });
+  }
 
-window.addEventListener('appinstalled', () => {
-    installBanner.style.display = 'none';
-    _deferredPrompt = null;
-});
+  window.addEventListener('appinstalled', function () {
+    if (banner) banner.style.display = 'none';
+    _prompt = null;
+    console.log('[PWA] App instalada correctamente');
+  });
+
+})();
 </script>
 </body>
 </html>
