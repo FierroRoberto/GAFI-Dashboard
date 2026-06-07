@@ -359,78 +359,130 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function handleFileSelect(event) {
-        const file = event.target.files?.[0];
+        // En movil el evento puede llegar sin files en el primer tick
+        const files = event.target.files;
+        if (!files || files.length === 0) return;
+        const file = files[0];
         if (!file) return;
 
-        // Validar extensión
+        // Validar extension
         const ext = file.name.split('.').pop().toLowerCase();
         if (!['xlsx','xls','xlsm','xlsb'].includes(ext)) {
             showToast('Formato no soportado. Use .xlsx, .xls o .xlsm', 'error');
             return;
         }
 
-        const reader = new FileReader();
-        reader.onload = e => {
+        // Validar tamano (max 50 MB)
+        if (file.size > 52428800) {
+            showToast('Archivo muy grande (max 50 MB).', 'error');
+            return;
+        }
+
+        showToast('Leyendo archivo...', 'info');
+
+        /* Parsea el buffer con SheetJS.
+           Intenta con cellStyles (para numFmt completo); si falla por memoria
+           en movil, reintenta sin cellStyles (degradacion elegante). */
+        function parseBuffer(buffer, isBinary) {
+            const baseOpts = isBinary
+                ? { type: 'binary', cellNF: true, raw: true }
+                : { type: 'array',  cellNF: true, raw: true };
             try {
-                const data     = new Uint8Array(e.target.result);
-                // cellStyles:true → SheetJS preserva formatos de celda (z, numFmt)
-                const workbook = XLSX.read(data, { type: 'array', cellStyles: true, cellNF: true });
-                const sheetsData = [];
+                return XLSX.read(buffer, { ...baseOpts, cellStyles: true });
+            } catch (_) {
+                return XLSX.read(buffer, { ...baseOpts, cellStyles: false });
+            }
+        }
 
-                workbook.SheetNames.forEach(sheetName => {
-                    const worksheet = workbook.Sheets[sheetName];
-                    if (!worksheet || !worksheet['!ref']) {
-                        sheetsData.push({ sheetName, rowsData: [], headers: [], worksheet, rawRows: [], cellMap: {} });
-                        return;
-                    }
+        function processWorkbook(workbook) {
+            const sheetsData = [];
 
-                    // Leer como raw (sin conversión automática de fechas ni porcentajes)
-                    const jsonRows = XLSX.utils.sheet_to_json(worksheet, {
-                        defval: '',
-                        header: 1,
-                        raw:    true,   // valores numéricos crudos (0.11 para 11%)
-                    });
+            workbook.SheetNames.forEach(sheetName => {
+                const worksheet = workbook.Sheets[sheetName];
+                if (!worksheet || !worksheet['!ref']) {
+                    sheetsData.push({ sheetName, rowsData: [], headers: [], worksheet, rawRows: [], cellMap: {} });
+                    return;
+                }
 
-                    if (jsonRows.length === 0) {
-                        sheetsData.push({ sheetName, rowsData: [], headers: [], worksheet, rawRows: [], cellMap: {} });
-                        return;
-                    }
-
-                    const cellMap  = _buildCellMap(worksheet);
-                    const headers  = (jsonRows[0] || []).map(h => h === null || h === undefined ? '' : String(h));
-
-                    const rowsData = jsonRows.slice(1).map((row, rIdx) =>
-                        headers.map((_, cIdx) => {
-                            const rawVal = row[cIdx] ?? '';
-                            const cell   = cellMap[`${cIdx},${rIdx + 1}`];
-                            const norm   = normalizeCell(rawVal, cell);
-                            if (!norm.isPercent) return rawVal;
-                            // Extraer número de decimales del numFmt para display fiel
-                            const fmt = (cell && (cell.z || cell.numFmt)) || '';
-                            const dec = fmt.includes('.00') ? 2 : fmt.includes('.0') ? 1 : 0;
-                            return { _pct: true, _val: norm.value, _raw: rawVal, _dec: dec };
-                        })
-                    );
-
-                    sheetsData.push({ sheetName, rowsData, headers, worksheet, rawRows: jsonRows, cellMap });
+                const jsonRows = XLSX.utils.sheet_to_json(worksheet, {
+                    defval: '', header: 1, raw: true,
                 });
 
-                if (!sheetsData.length) { showEmptyState('El archivo no contiene hojas válidas.'); return; }
+                if (jsonRows.length === 0) {
+                    sheetsData.push({ sheetName, rowsData: [], headers: [], worksheet, rawRows: [], cellMap: {} });
+                    return;
+                }
 
-                currentSheetsData = sheetsData;
-                familiasMode      = {};
-                ventaDiariaMode   = {};
-                selectedSheetName = sheetsData[0].sheetName;
-                renderRadioButtons();
-                renderSelectedTable();
-                showToast(`✓ ${sheetsData.length} hoja(s) cargadas`, 'success');
-            } catch (err) {
-                console.error('Error al parsear Excel:', err);
-                showToast('Error al leer el archivo Excel.', 'error');
+                const cellMap = _buildCellMap(worksheet);
+                const headers = (jsonRows[0] || []).map(h =>
+                    h === null || h === undefined ? '' : String(h)
+                );
+
+                const rowsData = jsonRows.slice(1).map((row, rIdx) =>
+                    headers.map((_, cIdx) => {
+                        const rawVal = row[cIdx] ?? '';
+                        const cell   = cellMap[`${cIdx},${rIdx + 1}`];
+                        const norm   = normalizeCell(rawVal, cell);
+                        if (!norm.isPercent) return rawVal;
+                        const fmt = (cell && (cell.z || cell.numFmt)) || '';
+                        const dec = fmt.includes('.00') ? 2 : fmt.includes('.0') ? 1 : 0;
+                        return { _pct: true, _val: norm.value, _raw: rawVal, _dec: dec };
+                    })
+                );
+
+                sheetsData.push({ sheetName, rowsData, headers, worksheet, rawRows: jsonRows, cellMap });
+            });
+
+            if (!sheetsData.length) {
+                showEmptyState('El archivo no contiene hojas validas.');
+                return;
             }
-        };
-        reader.onerror = () => showToast('Error al acceder al archivo.', 'error');
-        reader.readAsArrayBuffer(file);
+
+            currentSheetsData = sheetsData;
+            familiasMode      = {};
+            ventaDiariaMode   = {};
+            selectedSheetName = sheetsData[0].sheetName;
+            renderRadioButtons();
+            renderSelectedTable();
+            showToast('Archivo cargado: ' + sheetsData.length + ' hoja(s)', 'success');
+        }
+
+        /* Estrategia de lectura con fallback automatico:
+           1. ArrayBuffer  (optimo, rapido, funciona en Android y escritorio)
+           2. BinaryString (fallback para iOS Safari / archivos de iCloud) */
+        function tryBinaryString() {
+            const r = new FileReader();
+            r.onload  = ev => {
+                try {
+                    processWorkbook(parseBuffer(ev.target.result, true));
+                } catch (err) {
+                    console.error('BinaryString parse failed:', err);
+                    showToast('No se pudo leer el archivo. Intente abrirlo desde la app Archivos.', 'error');
+                }
+            };
+            r.onerror = () => showToast('Error de acceso. En iOS: use la app "Archivos" para seleccionar el Excel.', 'error');
+            r.onabort = () => showToast('Lectura cancelada.', 'error');
+            try { r.readAsBinaryString(file); }
+            catch (_) { showToast('Su navegador no soporta la lectura de este tipo de archivo.', 'error'); }
+        }
+
+        function tryArrayBuffer() {
+            const r = new FileReader();
+            r.onload  = ev => {
+                try {
+                    processWorkbook(parseBuffer(new Uint8Array(ev.target.result), false));
+                } catch (err) {
+                    console.warn('ArrayBuffer falló, intentando BinaryString...', err);
+                    tryBinaryString();
+                }
+            };
+            r.onerror = () => tryBinaryString();
+            r.onabort = () => tryBinaryString();
+            try { r.readAsArrayBuffer(file); }
+            catch (_) { tryBinaryString(); }
+        }
+
+        tryArrayBuffer();
     }
 
     /* ── RADIO BUTTONS ── */
