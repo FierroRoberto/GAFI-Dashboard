@@ -71,7 +71,9 @@
                     <span class="hide-mobile">Seleccionar Excel</span>
                     <span class="show-mobile">📂</span>
                 </label>
-                <input type="file" id="excelInput" accept=".xlsx, .xls, .xlsm" style="display: none;" aria-label="Seleccionar archivo Excel">
+                <input type="file" id="excelInput"
+                       accept=".xlsx,.xls,.xlsm,.xlsb,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                       style="display: none;" aria-label="Seleccionar archivo Excel">
             </div>
             <button id="exportAllBtn" class="btn-pill btn-pill--secondary" aria-label="Exportar todos los datos">
                 <i class="fas fa-download"></i>

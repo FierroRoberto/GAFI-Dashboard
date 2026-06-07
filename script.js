@@ -384,10 +384,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         showToast('Leyendo archivo...', 'info');
 
+        // ── Parsear ArrayBuffer con SheetJS ──
         function parseAndProcess(arrayBuffer) {
             var uint8 = new Uint8Array(arrayBuffer);
             var wb;
-            // Intentar parse con opciones minimas (sin cellStyles/cellNF que rompen iOS)
             try {
                 wb = XLSX.read(uint8, { type: 'array', raw: true, cellDates: false });
             } catch (e1) {
@@ -395,7 +395,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     wb = XLSX.read(uint8, { type: 'array' });
                 } catch (e2) {
                     var msg = e2 && e2.message ? e2.message : String(e2);
-                    showToast('No se pudo procesar el archivo: ' + msg.substring(0, 50), 'error');
+                    showToast('No se pudo procesar: ' + msg.substring(0, 50), 'error');
                     try { event.target.value = ''; } catch(e) {}
                     return;
                 }
@@ -403,9 +403,9 @@ document.addEventListener('DOMContentLoaded', () => {
             processWorkbook(wb);
         }
 
+        // ── Procesar workbook → sheetsData ──
         function processWorkbook(workbook) {
             var sheetsData = [];
-
             for (var si = 0; si < workbook.SheetNames.length; si++) {
                 var sheetName = workbook.SheetNames[si];
                 var worksheet = workbook.Sheets[sheetName];
@@ -442,7 +442,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 sheetsData.push({ sheetName: sheetName, rowsData: rowsData, headers: headers, worksheet: worksheet, rawRows: jsonRows, cellMap: cellMap });
             }
-
             if (!sheetsData.length) {
                 showEmptyState('El archivo no contiene hojas validas.');
                 return;
@@ -456,35 +455,73 @@ document.addEventListener('DOMContentLoaded', () => {
             showToast('Archivo cargado: ' + sheetsData.length + ' hoja(s)', 'success');
         }
 
-        /* ── FileReader iniciado SINCRONO en el mismo tick del evento ──
-           CRITICO para iOS: el acceso al File object se revoca rapidamente
-           cuando viene de iCloud Drive u otros proveedores externos.
-           FileReader.readAsArrayBuffer iniciado sincrono conserva el acceso. */
-        var reader = new FileReader();
+        // ── Metodo 1: FileReader (inicio sincrono en el mismo tick) ──
+        function readViaFileReader() {
+            var reader = new FileReader();
+            reader.onload = function(ev) {
+                try { parseAndProcess(ev.target.result); }
+                catch (err) {
+                    var msg = err && err.message ? err.message : String(err);
+                    showToast('Error al procesar: ' + msg.substring(0, 60), 'error');
+                }
+            };
+            reader.onerror = function() {
+                console.warn('[GAFI] FileReader fallo, intentando fetch blob...');
+                readViaFetch();
+            };
+            reader.onabort = function() { showToast('Lectura cancelada.', 'error'); };
+            reader.readAsArrayBuffer(file);
+        }
 
-        reader.onload = function(ev) {
+        // ── Metodo 2: fetch(objectURL) — resuelve el problema de Android
+        //    cuando el File viene de Google Drive, WhatsApp, etc.
+        //    createObjectURL crea una URL local que Android siempre puede leer. ──
+        function readViaFetch() {
+            var objectURL = null;
             try {
-                parseAndProcess(ev.target.result);
-            } catch (err) {
-                var msg = err && err.message ? err.message : String(err);
-                showToast('Error al procesar: ' + msg.substring(0, 60), 'error');
-                try { event.target.value = ''; } catch(e) {}
+                objectURL = URL.createObjectURL(file);
+            } catch (e) {
+                showToast('No se pudo acceder al archivo en este dispositivo.', 'error');
+                return;
             }
-        };
+            fetch(objectURL)
+                .then(function(res) { return res.arrayBuffer(); })
+                .then(function(buffer) {
+                    URL.revokeObjectURL(objectURL);
+                    parseAndProcess(buffer);
+                })
+                .catch(function(err) {
+                    URL.revokeObjectURL(objectURL);
+                    // Metodo 3: FileReader con slice — fuerza una copia local del blob
+                    readViaSlice();
+                });
+        }
 
-        reader.onerror = function() {
-            var errMsg = reader.error ? reader.error.message : 'desconocido';
-            console.error('[GAFI] FileReader.onerror:', errMsg);
-            showToast('No se pudo leer el archivo.', 'error');
-            try { event.target.value = ''; } catch(e) {}
-        };
+        // ── Metodo 3: Blob.slice + FileReader
+        //    Crear una copia del blob fuerza a Android a materializar el archivo
+        //    desde cualquier proveedor (Drive, Dropbox, etc.) ──
+        function readViaSlice() {
+            try {
+                var blob = file.slice(0, file.size, file.type || 'application/octet-stream');
+                var reader2 = new FileReader();
+                reader2.onload = function(ev) {
+                    try { parseAndProcess(ev.target.result); }
+                    catch (err) {
+                        var msg = err && err.message ? err.message : String(err);
+                        showToast('Error al procesar: ' + msg.substring(0, 60), 'error');
+                    }
+                };
+                reader2.onerror = function() {
+                    showToast('No se pudo leer el archivo. Guardelo localmente y vuelva a intentarlo.', 'error');
+                };
+                reader2.readAsArrayBuffer(blob);
+            } catch (e) {
+                showToast('No se pudo leer el archivo. Guardelo localmente y vuelva a intentarlo.', 'error');
+            }
+        }
 
-        reader.onabort = function() {
-            showToast('Lectura cancelada.', 'error');
-        };
-
-        // Iniciar lectura inmediatamente en el mismo tick del evento (critico para iOS)
-        reader.readAsArrayBuffer(file);
+        // Iniciar con FileReader sincrono; si falla → fetch(objectURL) → slice
+        readViaFileReader();
     }
 
     /* ── RADIO BUTTONS ── */
