@@ -367,67 +367,45 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function handleFileSelect(event) {
-        /* CRITICO PARA ANDROID:
-           El error "file or directory could not be found" ocurre porque
-           Android revoca el permiso del content:// URI inmediatamente
-           despues del event handler. Cualquier codigo entre el evento
-           y reader.read() puede invalidar el acceso.
-
-           SOLUCION: reader.readAsArrayBuffer(file) debe ser la PRIMERA
-           instruccion ejecutada, antes de validaciones, toasts o cualquier
-           otra cosa. Las validaciones se hacen DENTRO del onload. */
-
         var files = event.target.files;
         if (!files || files.length === 0) return;
         var file = files[0];
         if (!file) return;
 
-        // Iniciar lectura INMEDIATAMENTE - primera instruccion sin demora
-        var reader = new FileReader();
-        reader.readAsArrayBuffer(file);   // <-- debe ser la primera llamada
-
-        // A partir de aqui, el permiso del URI ya fue capturado por FileReader.
-        // Ahora si podemos hacer validaciones y preparar el resto.
-
         var fileName = file.name || '';
         var fileSize = file.size || 0;
+        var ext = fileName.split('.').pop().toLowerCase();
 
-        reader.onload = function(ev) {
-            // Validar extension (dentro del onload, no antes)
-            var ext = fileName.split('.').pop().toLowerCase();
-            if (['xlsx','xls','xlsm','xlsb'].indexOf(ext) === -1) {
-                showToast('Formato no soportado. Use .xlsx o .xls', 'error');
-                return;
-            }
-            if (fileSize > 52428800) {
-                showToast('Archivo muy grande (max 50 MB).', 'error');
-                return;
-            }
+        if (['xlsx','xls','xlsm','xlsb'].indexOf(ext) === -1) {
+            showToast('Formato no soportado. Use .xlsx o .xls', 'error');
+            return;
+        }
+        if (fileSize > 52428800) {
+            showToast('Archivo muy grande (max 50 MB).', 'error');
+            return;
+        }
 
-            showToast('Procesando archivo...', 'info');
+        showToast('Leyendo archivo...', 'info');
 
-            var arrayBuffer = ev.target.result;
+        // Funcion central que procesa el ArrayBuffer independientemente
+        // del metodo que lo obtuvo
+        function processBuffer(arrayBuffer) {
             if (!arrayBuffer || arrayBuffer.byteLength === 0) {
-                showToast('El archivo esta vacio o no se pudo leer.', 'error');
+                showToast('El archivo esta vacio.', 'error');
                 return;
             }
-
-            // Parsear con SheetJS
             var uint8 = new Uint8Array(arrayBuffer);
             var wb;
             try {
                 wb = XLSX.read(uint8, { type: 'array', raw: true, cellDates: false });
             } catch (e1) {
-                try {
-                    wb = XLSX.read(uint8, { type: 'array' });
-                } catch (e2) {
-                    var msg = e2 && e2.message ? e2.message : String(e2);
-                    showToast('Archivo Excel invalido: ' + msg.substring(0, 40), 'error');
+                try { wb = XLSX.read(uint8, { type: 'array' }); }
+                catch (e2) {
+                    var m = e2 && e2.message ? e2.message : String(e2);
+                    showToast('Archivo Excel invalido: ' + m.substring(0, 40), 'error');
                     return;
                 }
             }
-
-            // Construir sheetsData
             var sheetsData = [];
             for (var si = 0; si < wb.SheetNames.length; si++) {
                 var sheetName = wb.SheetNames[si];
@@ -465,11 +443,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 sheetsData.push({ sheetName: sheetName, rowsData: rowsData, headers: headers, worksheet: worksheet, rawRows: jsonRows, cellMap: cellMap });
             }
-
-            if (!sheetsData.length) {
-                showEmptyState('El archivo no contiene hojas validas.');
-                return;
-            }
+            if (!sheetsData.length) { showEmptyState('El archivo no contiene hojas validas.'); return; }
             currentSheetsData = sheetsData;
             familiasMode      = {};
             ventaDiariaMode   = {};
@@ -477,21 +451,46 @@ document.addEventListener('DOMContentLoaded', () => {
             renderRadioButtons();
             renderSelectedTable();
             showToast('Archivo cargado: ' + sheetsData.length + ' hoja(s)', 'success');
-        };
+        }
 
-        reader.onerror = function() {
-            var code = reader.error ? reader.error.code : '?';
-            var msg  = reader.error ? reader.error.message : 'desconocido';
-            console.error('[GAFI] FileReader error code=' + code + ' msg=' + msg);
-            // Si falla incluso con lectura inmediata, el archivo no es accesible.
-            // Dar instruccion concreta al usuario.
-            showToast('No se puede acceder al archivo. Descargue el Excel a su carpeta de Descargas e intentelo desde ahi.', 'error');
+        // METODO 1: file.arrayBuffer() — Promise nativa, la mas compatible
+        // con content:// URIs de Android (Google Drive, WhatsApp, etc.)
+        // porque usa el ContentResolver de Android directamente sin FileReader.
+        if (typeof file.arrayBuffer === 'function') {
+            file.arrayBuffer()
+                .then(function(buf) { processBuffer(buf); })
+                .catch(function() { tryFileReader(); });
+            return;
+        }
+
+        // METODO 2: FileReader como fallback
+        tryFileReader();
+
+        function tryFileReader() {
+            var reader = new FileReader();
+            reader.onload  = function(ev) { processBuffer(ev.target.result); };
+            reader.onerror = function() { tryResponseBlob(); };
+            reader.onabort = function() { showToast('Lectura cancelada.', 'error'); };
+            try { reader.readAsArrayBuffer(file); }
+            catch(e) { tryResponseBlob(); }
+        }
+
+        // METODO 3: Response(blob).arrayBuffer() — API moderna que Android
+        // Chrome usa internamente para resolver content:// URIs de SAF.
+        // Convierte el File a Response y lee el body como ArrayBuffer.
+        function tryResponseBlob() {
+            if (typeof Response === 'undefined') { showFinalError(); return; }
+            try {
+                new Response(file).arrayBuffer()
+                    .then(function(buf) { processBuffer(buf); })
+                    .catch(function() { showFinalError(); });
+            } catch(e) { showFinalError(); }
+        }
+
+        function showFinalError() {
+            showToast('No se pudo leer el archivo. Intente compartirlo a "Mis Archivos" y abrirlo desde ahi.', 'error');
             try { event.target.value = ''; } catch(e) {}
-        };
-
-        reader.onabort = function() {
-            showToast('Lectura cancelada.', 'error');
-        };
+        }
     }
 
     /* ── RADIO BUTTONS ── */
