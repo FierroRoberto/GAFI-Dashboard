@@ -259,35 +259,43 @@ document.addEventListener('DOMContentLoaded', () => {
     ══════════════════════════════════════════════════════ */
 
     /**
-     * Analiza el numFmt de SheetJS y devuelve el tipo de porcentaje:
-     *   'quoted'  → numFmt tiene '" %"' → valor ya en escala 0–100
-     *   'decimal' → numFmt termina en '%' sin comillas → valor 0–1 → × 100
-     *   'none'    → no es porcentaje
+     * Analiza la celda de SheetJS y devuelve el tipo de porcentaje.
+     * Funciona con y sin cellNF/cellStyles (compatible con iOS Safari).
+     *
+     * Fuentes de informacion inspeccionadas en orden de confiabilidad:
+     *   1. cell.z  — numFmt string (disponible sin cellNF en muchos casos)
+     *   2. cell.w  — valor formateado como string ("11%", "107.3 %")
+     *               SheetJS SIEMPRE lo genera, incluso sin opciones extra.
+     *   3. cell.t === 's' con cell.v que contiene '%' — texto literal
+     *
+     * Retorna: 'quoted' | 'decimal' | 'text' | 'none'
      */
     function _detectPctFormat(cell) {
         if (!cell) return 'none';
 
-        // SheetJS expone el numFmt en cell.z (format string de la celda)
-        const fmt = cell.z || cell.numFmt || '';
-
-        if (typeof fmt !== 'string' || fmt === '') {
-            // Sin formato → revisar si es texto con '%'
-            if (cell.t === 's' && typeof cell.v === 'string' && cell.v.includes('%')) {
-                return 'text';
-            }
-            return 'none';
+        // ── Fuente 1: cell.z (numFmt string) ──
+        var fmt = cell.z || cell.numFmt || '';
+        if (typeof fmt === 'string' && fmt !== '') {
+            if (fmt.indexOf('" %"') !== -1 || fmt.indexOf("' %'") !== -1) return 'quoted';
+            var stripped = fmt.replace(/"[^"]*"/g, '').replace(/'[^']*'/g, '');
+            if (stripped.indexOf('%') !== -1) return 'decimal';
         }
 
-        // '0" %"' o '0.0" %"' → % entre comillas → valor YA en escala
-        if (fmt.includes('" %"') || fmt.includes("' %'")) return 'quoted';
+        // ── Fuente 2: cell.w (valor formateado por SheetJS, siempre presente) ──
+        // Ejemplos: "11%", "107.3 %", "-5%", "99 %"
+        var w = cell.w;
+        if (typeof w === 'string' && w.indexOf('%') !== -1) {
+            // Si el formato es "107.3 %" (espacio antes de %) → quoted (ya en escala)
+            // Si el formato es "11%"  (sin espacio)            → decimal (era 0.11)
+            // Distinguimos por el espacio antes del %
+            if (w.indexOf(' %') !== -1) return 'quoted';
+            return 'decimal';
+        }
 
-        // '0%', '0.0%', '0.00%' → % real de Excel → valor decimal 0–1
-        // Asegurarse que el % NO esté entre comillas
-        const stripped = fmt.replace(/"[^"]*"/g, '').replace(/'[^']*'/g, '');
-        if (stripped.includes('%')) return 'decimal';
-
-        // Tipo texto con símbolo %
-        if (cell.t === 's' && typeof cell.v === 'string' && cell.v.includes('%')) return 'text';
+        // ── Fuente 3: celda de texto con simbolo % ──
+        if (cell.t === 's' && typeof cell.v === 'string' && cell.v.indexOf('%') !== -1) {
+            return 'text';
+        }
 
         return 'none';
     }
@@ -377,12 +385,24 @@ document.addEventListener('DOMContentLoaded', () => {
         showToast('Leyendo archivo...', 'info');
 
         /* parseWorkbookFromArray:
-           Recibe Uint8Array, intenta con cellStyles=true,
-           si falla por memoria usa cellStyles=false */
+           Lee el XLSX con opciones minimas y seguras para iOS Safari.
+           - cellStyles y cellNF se omiten: usan XML DOM interno que falla en iOS.
+           - raw:true preserva valores numericos crudos (0.11 para 11%).
+           - El numFmt se extrae manualmente de la propiedad .z de cada celda,
+             que SheetJS siempre popula independientemente de cellNF/cellStyles. */
         function parseWorkbookFromArray(uint8) {
-            const base = { type: 'array', cellNF: true, raw: true };
-            try { return XLSX.read(uint8, { ...base, cellStyles: true }); }
-            catch (_) { return XLSX.read(uint8, { ...base, cellStyles: false }); }
+            // Opciones seguras para todos los navegadores incluyendo iOS Safari
+            var opts = { type: 'array', raw: true, cellDates: false };
+            try {
+                return XLSX.read(uint8, opts);
+            } catch (e1) {
+                // Ultimo intento: modo mas basico posible
+                try {
+                    return XLSX.read(uint8, { type: 'array' });
+                } catch (e2) {
+                    throw new Error('XLSX.read fallo: ' + (e2 && e2.message ? e2.message : String(e2)));
+                }
+            }
         }
 
         function processWorkbook(workbook) {
@@ -431,10 +451,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         function onError(context, err) {
-            console.error('[GAFI] Error en ' + context + ':', err);
-            showToast('No se pudo leer el archivo. Verifique que sea un .xlsx valido.', 'error');
-            // Resetear el input para permitir intentar de nuevo
-            event.target.value = '';
+            var msg = err && err.message ? err.message : String(err);
+            console.error('[GAFI] Error en ' + context + ': ' + msg);
+            // Mostrar el error real en consola para facilitar diagnostico
+            // y un mensaje amigable al usuario
+            showToast('Error al leer: ' + msg.substring(0, 60), 'error');
+            try { event.target.value = ''; } catch(e) {}
         }
 
         /* ── ESTRATEGIA PRINCIPAL: file.arrayBuffer() (API moderna, iOS 14+, Android) ──
