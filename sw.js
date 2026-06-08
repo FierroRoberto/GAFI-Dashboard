@@ -1,10 +1,10 @@
 /* ============================================================
-   sw.js — GAFI Dashboard PWA  |  Service Worker único v4
+   sw.js — GAFI Dashboard PWA  |  Service Worker único v4.1
    Estrategia: Cache-First shell + Network-First datos
    ============================================================ */
 'use strict';
 
-const CACHE = 'gafi-v4';
+const CACHE = 'gafi-v4.1';
 
 /* Assets del shell — se cachean en install.
    Promise.allSettled garantiza que un asset faltante
