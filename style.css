@@ -443,7 +443,7 @@ html, body {
 
 .helper-credit {
     font-family: 'Space Mono', monospace;
-    font-size: 0.55rem;
+    font-size: 0.65rem;
     color: var(--text-muted);
     opacity: 0.6;
     margin-top: 0.2rem;
